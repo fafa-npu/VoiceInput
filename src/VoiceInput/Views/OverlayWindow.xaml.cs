@@ -23,7 +23,7 @@ public partial class OverlayWindow : Window
     private const double LeftPad = 18;
     private const double RightPad = 18;
     private const double WaveBlock = 44 + 14;     // waveform width + right margin
-    private const double TextMaxWidth = 520;      // matches Label.MaxWidth
+    private const double TextMaxWidth = 640;      // matches Label.MaxWidth
     private const double MinCapsuleWidth = 160;
     private const double MaxCapsuleWidth = LeftPad + WaveBlock + TextMaxWidth + RightPad;
 
@@ -83,8 +83,30 @@ public partial class OverlayWindow : Window
     {
         if (string.IsNullOrEmpty(text)) return;
         Label.Opacity = 1.0;
-        Label.Text = text;
-        SetWidth(ComputeTargetWidth(text), animate: true);
+        // When the transcript is longer than the capsule can show, display the tail (the latest
+        // words) with a leading ellipsis instead of clipping the end out of view.
+        string shown = FitTail(text, TextMaxWidth);
+        Label.Text = shown;
+        SetWidth(ComputeTargetWidth(shown), animate: true);
+    }
+
+    /// <summary>Return the longest trailing slice of <paramref name="text"/> (prefixed with "…")
+    /// whose rendered width fits within <paramref name="maxWidth"/>. Returns the text unchanged when it fits.</summary>
+    private string FitTail(string text, double maxWidth)
+    {
+        if (MeasureTextWidth(text) <= maxWidth) return text;
+        const string ellipsis = "…";
+        double ellipsisWidth = MeasureTextWidth(ellipsis);
+
+        // Binary-search the smallest number of leading chars to drop so the remainder fits.
+        int lo = 0, hi = text.Length;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (ellipsisWidth + MeasureTextWidth(text[mid..]) <= maxWidth) hi = mid;
+            else lo = mid + 1;
+        }
+        return ellipsis + text[lo..];
     }
 
     public void SetStatus(string status)

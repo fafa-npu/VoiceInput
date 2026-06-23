@@ -9,7 +9,7 @@
         ShowActivated="False"
         Topmost="True"
         ResizeMode="NoResize"
-        Width="700" Height="150"
+        Width="820" Height="150"
         IsHitTestVisible="False"
         Focusable="False">
 
@@ -45,7 +45,7 @@
                                           Margin="0,0,14,0" />
                 <TextBlock x:Name="Label"
                            VerticalAlignment="Center"
-                           MaxWidth="520"
+                           MaxWidth="640"
                            Foreground="#FFF5F5F7"
                            FontSize="18"
                            FontWeight="Medium"
