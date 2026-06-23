@@ -26,6 +26,7 @@ public sealed class AppController : IDisposable
 
     private OverlayWindow? _overlay;
     private WinForms.NotifyIcon? _tray;
+    private System.Drawing.Icon? _trayIcon;
 
     private ISpeechEngine? _engine;
     private readonly StringBuilder _finals = new();
@@ -268,9 +269,10 @@ public sealed class AppController : IDisposable
 
     private void BuildTray()
     {
+        _trayIcon = TrayIconFactory.CreateMicIcon();
         _tray = new WinForms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = _trayIcon,
             Visible = true,
             Text = TrayTooltip(),
         };
@@ -398,5 +400,6 @@ public sealed class AppController : IDisposable
             _tray.Visible = false;
             _tray.Dispose();
         }
+        _trayIcon?.Dispose();
     }
 }
