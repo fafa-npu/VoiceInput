@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -36,6 +37,7 @@ public sealed class AppController : IDisposable
     private string _partial = string.Empty;
     private volatile float _level;
     private bool _dictating;
+    private volatile bool _paused;   // when true, the PTT key is ignored (listening paused, app stays up)
     // Serializes the start/stop/cancel lifecycle so sessions can never overlap
     // (Windows dictation forbids overlapping audio-engine sessions).
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -74,7 +76,7 @@ public sealed class AppController : IDisposable
         await _gate.WaitAsync();
         try
         {
-            if (_dictating) return;
+            if (_dictating || _paused) return;
             DisposeEngine();           // safety: clear any engine a prior session failed to tear down
             _dictating = true;
             ClearTranscript();
@@ -306,7 +308,49 @@ public sealed class AppController : IDisposable
         RebuildMenu();
     }
 
-    private string TrayTooltip() => $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+    private string TrayTooltip() => _paused
+        ? "VoiceInput — paused"
+        : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+
+    private void TogglePause()
+    {
+        _paused = !_paused;
+        if (_tray is not null) _tray.Text = TrayTooltip();
+        Notify(_paused ? "Listening paused" : "Listening resumed",
+            _paused ? "VoiceInput won't respond to the push-to-talk key until resumed."
+                    : "Push-to-talk is active again.");
+        RebuildMenu();
+    }
+
+    private static string StartupShortcutPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "VoiceInput.lnk");
+
+    private static bool IsAutoStartEnabled() => File.Exists(StartupShortcutPath);
+
+    private void SetAutoStart(bool enabled)
+    {
+        try
+        {
+            if (enabled)
+            {
+                string exe = Environment.ProcessPath!;
+                string dir = Path.GetDirectoryName(exe)!;
+                string ps = $"$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{StartupShortcutPath}'); " +
+                            $"$l.TargetPath='{exe}'; $l.WorkingDirectory='{dir}'; $l.Description='VoiceInput'; $l.Save()";
+                Process.Start(new ProcessStartInfo("powershell.exe",
+                    $"-NoProfile -WindowStyle Hidden -Command \"{ps}\"")
+                { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit(5000);
+            }
+            else if (File.Exists(StartupShortcutPath))
+            {
+                File.Delete(StartupShortcutPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("SetAutoStart", ex);
+        }
+    }
 
     private static string PttDisplay(string key) => key switch
     {
@@ -323,6 +367,11 @@ public sealed class AppController : IDisposable
 
         var header = new WinForms.ToolStripMenuItem($"VoiceInput v{UpdateService.CurrentVersion}") { Enabled = false };
         menu.Items.Add(header);
+        menu.Items.Add(new WinForms.ToolStripSeparator());
+
+        var pause = new WinForms.ToolStripMenuItem(_paused ? "Resume listening" : "Pause listening");
+        pause.Click += (_, _) => TogglePause();
+        menu.Items.Add(pause);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
         // Language
@@ -376,6 +425,10 @@ public sealed class AppController : IDisposable
         var openLog = new WinForms.ToolStripMenuItem("Open log");
         openLog.Click += (_, _) => OpenUri(Log.FilePath);
         menu.Items.Add(openLog);
+
+        var autostart = new WinForms.ToolStripMenuItem("Start at login") { Checked = IsAutoStartEnabled() };
+        autostart.Click += (_, _) => { SetAutoStart(!IsAutoStartEnabled()); RebuildMenu(); };
+        menu.Items.Add(autostart);
 
         var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
         diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };
