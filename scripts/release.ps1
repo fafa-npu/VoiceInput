@@ -40,20 +40,37 @@ $pubArgs = @(
 & dotnet @pubArgs | Out-Null
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw 'dotnet publish failed.' }
 
-# Create the (published) release.
+# Create the (published) release, or reuse it if the tag already exists.
 $body = @{
     tag_name = $Version
     name     = "VoiceInput $Version"
     draft    = $false
     body     = "Self-contained Windows build - no .NET install needed. Download VoiceInput.exe and double-click to run, or for auto-start at login: scripts/install.ps1 -Source VoiceInput.exe"
 } | ConvertTo-Json
-$rel = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases" -Method Post -Headers $H -ContentType 'application/json' -Body $body
+try {
+    $rel = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases" -Method Post -Headers $H -ContentType 'application/json' -Body $body
+}
+catch {
+    $rel = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases/tags/$Version" -Headers $H
+    if ($rel.draft) {
+        $rel = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases/$($rel.id)" -Method Patch -Headers $H -ContentType 'application/json' -Body '{"draft":false}'
+    }
+}
 
-# Upload the exe via REST (gh's own asset upload is broken on this GHE instance).
+# Replace any existing asset of the same name, then upload the exe via REST
+# (gh's own asset upload is broken on this GHE instance).
+foreach ($a in @($rel.assets | Where-Object { $_.name -eq 'VoiceInput.exe' })) {
+    try { Invoke-RestMethod -Uri "$Api/repos/$Repo/releases/assets/$($a.id)" -Method Delete -Headers $H | Out-Null } catch {}
+}
 Write-Host "Uploading VoiceInput.exe..." -ForegroundColor Cyan
 $up = "$Uploads/repos/$Repo/releases/$($rel.id)/assets?name=VoiceInput.exe"
-$r = Invoke-WebRequest -Uri $up -Method Post -Headers $H -ContentType 'application/octet-stream' -InFile $exe -TimeoutSec 600 -SkipHttpErrorCheck
-if ($r.StatusCode -ne 201) { throw "Asset upload failed: HTTP $($r.StatusCode)" }
+try {
+    $r = Invoke-WebRequest -Uri $up -Method Post -Headers $H -ContentType 'application/octet-stream' -InFile $exe -TimeoutSec 600
+    if ($r.StatusCode -ne 201) { throw "HTTP $($r.StatusCode)" }
+}
+catch {
+    throw "Asset upload failed: $($_.Exception.Message)"
+}
 
 Write-Host "Released $Version" -ForegroundColor Green
 Write-Host "  Page:     $($rel.html_url)"
