@@ -1,0 +1,57 @@
+<Window x:Class="VoiceInput.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceInput Settings"
+        Width="460" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        ShowInTaskbar="True">
+    <Grid Margin="20">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="Speech Engine" FontWeight="Bold" Margin="0,0,0,6" />
+        <ComboBox x:Name="EngineCombo" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,8">
+            <ComboBoxItem Content="Windows (on-device, offline)" />
+            <ComboBoxItem Content="Azure Speech (streaming, needs key)" />
+        </ComboBox>
+
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Azure Key" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureKeyBox" Grid.Row="2" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="3" Grid.Column="0" Text="Azure Region" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureRegionBox" Grid.Row="3" Grid.Column="1" Margin="0,4" />
+
+        <Separator Grid.Row="4" Grid.ColumnSpan="2" Margin="0,12" />
+
+        <CheckBox x:Name="LlmEnabledBox" Grid.Row="5" Grid.ColumnSpan="2"
+                  Content="Enable LLM refinement" FontWeight="Bold" Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="6" Grid.Column="0" Text="API Base URL" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmBaseUrlBox" Grid.Row="6" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="7" Grid.Column="0" Text="API Key" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmApiKeyBox" Grid.Row="7" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="8" Grid.Column="0" Text="Model" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmModelBox" Grid.Row="8" Grid.Column="1" Margin="0,4" />
+
+        <DockPanel Grid.Row="9" Grid.ColumnSpan="2" Margin="0,16,0,0" LastChildFill="False">
+            <TextBlock x:Name="StatusText" DockPanel.Dock="Left" VerticalAlignment="Center"
+                       Foreground="#555" TextWrapping="Wrap" MaxWidth="220" />
+            <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save" Width="80" Margin="8,0,0,0" Click="OnSave" />
+            <Button x:Name="TestButton" DockPanel.Dock="Right" Content="Test" Width="80" Click="OnTest" />
+        </DockPanel>
+    </Grid>
+</Window>
