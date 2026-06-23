@@ -23,6 +23,8 @@ public sealed class AppController : IDisposable
     private readonly AudioCapture _audio = new();
     private readonly TextInjector _injector = new();
     private readonly LlmRefiner _refiner = new();
+    private readonly UpdateService _updater = new();
+    private string? _availableUpdateTag;
 
     private OverlayWindow? _overlay;
     private WinForms.NotifyIcon? _tray;
@@ -58,8 +60,10 @@ public sealed class AppController : IDisposable
         _overlay = new OverlayWindow { LevelSource = () => _level };
         BuildTray();
         _hook.Install();
-        Log.Write($"=== VoiceInput started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
+        Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
+
+        _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
     }
 
     // ---------------- Dictation flow ----------------
@@ -316,6 +320,10 @@ public sealed class AppController : IDisposable
     {
         var menu = new WinForms.ContextMenuStrip();
 
+        var header = new WinForms.ToolStripMenuItem($"VoiceInput v{UpdateService.CurrentVersion}") { Enabled = false };
+        menu.Items.Add(header);
+        menu.Items.Add(new WinForms.ToolStripSeparator());
+
         // Language
         var lang = new WinForms.ToolStripMenuItem("Language");
         foreach (var (code, display) in AppSettings.SupportedLanguages)
@@ -372,6 +380,15 @@ public sealed class AppController : IDisposable
         diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };
         menu.Items.Add(diag);
 
+        var update = new WinForms.ToolStripMenuItem(
+            _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
+        update.Click += (_, _) =>
+        {
+            if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
+            else PromptAndApplyUpdate(_availableUpdateTag);
+        };
+        menu.Items.Add(update);
+
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
         var quit = new WinForms.ToolStripMenuItem("Quit");
@@ -403,6 +420,56 @@ public sealed class AppController : IDisposable
     }
 
     private void Persist() => _store.Save(_settings);
+
+    // ---------------- Updates (manual, user-chosen) ----------------
+
+    private async Task CheckForUpdatesAsync(bool silent)
+    {
+        var result = await _updater.CheckAsync();
+        _ = _ui.BeginInvoke(() =>
+        {
+            switch (result.Outcome)
+            {
+                case UpdateService.CheckOutcome.UpdateAvailable:
+                    _availableUpdateTag = result.LatestTag;
+                    Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
+                    RebuildMenu();
+                    break;
+                case UpdateService.CheckOutcome.UpToDate:
+                    _availableUpdateTag = null;
+                    if (!silent) Notify("Up to date", $"You're on the latest version (v{UpdateService.CurrentVersion}).");
+                    RebuildMenu();
+                    break;
+                case UpdateService.CheckOutcome.CheckFailed:
+                    if (!silent)
+                        Notify("Update check failed",
+                            $"Couldn't reach releases. Run once: gh auth login --hostname {UpdateService.GheHost}");
+                    break;
+            }
+        });
+    }
+
+    private void PromptAndApplyUpdate(string tag)
+    {
+        var answer = MessageBox.Show(
+            $"Update to {tag} now?\n\nVoiceInput will download the new version and restart.",
+            "VoiceInput update", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes) return;
+
+        Notify("Updating…", $"Downloading {tag}. The app will restart when it's ready.");
+        _ = ApplyUpdateAsync(tag);
+    }
+
+    private async Task ApplyUpdateAsync(string tag)
+    {
+        bool ok = await _updater.DownloadAndApplyAsync(tag);
+        _ = _ui.BeginInvoke(() =>
+        {
+            if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches
+            else Notify("Update failed",
+                $"Couldn't download {tag}. Check: gh auth login --hostname {UpdateService.GheHost}");
+        });
+    }
 
     private void Notify(string title, string message) =>
         _tray?.ShowBalloonTip(6000, title, message, WinForms.ToolTipIcon.Info);
