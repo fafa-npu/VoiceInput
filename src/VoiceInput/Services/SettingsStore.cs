@@ -50,6 +50,7 @@ public sealed class SettingsStore
                 LlmBaseUrl = dto.LlmBaseUrl,
                 LlmModel = dto.LlmModel,
                 LlmApiKey = Unprotect(dto.LlmApiKeyEnc),
+                DiagnosticLogging = dto.DiagnosticLogging,
             };
         }
         catch
@@ -73,6 +74,7 @@ public sealed class SettingsStore
             LlmBaseUrl = s.LlmBaseUrl,
             LlmModel = s.LlmModel,
             LlmApiKeyEnc = Protect(s.LlmApiKey),
+            DiagnosticLogging = s.DiagnosticLogging,
         };
         File.WriteAllText(FilePath, JsonSerializer.Serialize(dto, JsonOptions));
     }
@@ -110,7 +112,8 @@ public sealed class SettingsStore
         public string AzureKeyEnc { get; set; } = string.Empty;
         public bool LlmEnabled { get; set; }
         public string LlmBaseUrl { get; set; } = "https://api.openai.com/v1";
-        public string LlmModel { get; set; } = "gpt-4o-mini";
+        public string LlmModel { get; set; } = "gpt-4.1-mini";
         public string LlmApiKeyEnc { get; set; } = string.Empty;
+        public bool DiagnosticLogging { get; set; }
     }
 }

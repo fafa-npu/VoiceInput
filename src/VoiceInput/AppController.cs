@@ -140,7 +140,9 @@ public sealed class AppController : IDisposable
             await TeardownEngineAsync();
 
             string text = ComposeTranscript();
-            Log.Write($"PTT released -> transcript ({text.Length} chars): \"{Trim(text)}\"");
+            Log.Write(_settings.DiagnosticLogging
+                ? $"PTT released -> transcript ({text.Length} chars): \"{Trim(text)}\""
+                : $"PTT released -> transcript: {text.Length} chars");
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -153,7 +155,9 @@ public sealed class AppController : IDisposable
             {
                 _overlay!.SetStatus("Refining…");
                 string refined = await _refiner.RefineAsync(text, _settings);
-                Log.Write($"LLM refine: \"{Trim(text)}\" -> \"{Trim(refined)}\"");
+                Log.Write(_settings.DiagnosticLogging
+                    ? $"LLM refine: \"{Trim(text)}\" -> \"{Trim(refined)}\""
+                    : $"LLM refine: {text.Length} -> {refined.Length} chars");
                 text = refined;
             }
 
@@ -363,6 +367,10 @@ public sealed class AppController : IDisposable
         var openLog = new WinForms.ToolStripMenuItem("Open log");
         openLog.Click += (_, _) => OpenUri(Log.FilePath);
         menu.Items.Add(openLog);
+
+        var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
+        diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };
+        menu.Items.Add(diag);
 
         menu.Items.Add(new WinForms.ToolStripSeparator());
 

@@ -25,15 +25,37 @@ Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
   Python, 杰森 → JSON) via any OpenAI-compatible API. Never rewrites or polishes correct text.
 - **Tray-only**, no taskbar window. API keys are encrypted at rest with Windows DPAPI.
 
-## Build & run
+## Install (one-click)
+
+**From a cloned repo** (needs the .NET 10 SDK — builds, installs to `%LOCALAPPDATA%`, enables
+auto-start at login, and launches):
+
+```powershell
+git clone https://microsoft.ghe.com/Zhao-Hua/VoiceInput.git
+cd VoiceInput
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+**From a prebuilt release** (no .NET SDK needed) — download `VoiceInput.exe` from the
+[Releases](https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases) page, then either just
+double-click it to run, or for auto-start at login:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -Source .\VoiceInput.exe
+```
+
+Uninstall any time: `scripts\install.ps1 -Uninstall`.
+
+## Build & run (developers)
 
 Requires the **.NET 10 SDK** and the **Windows Desktop** runtime.
 
 ```bash
 make build      # compile
 make run        # run from source (Debug)
-make publish    # self-contained single-file exe -> publish/VoiceInput.exe
-make install    # publish + copy to %LOCALAPPDATA% + add a Startup shortcut
+make publish    # self-contained single-file exe -> publish/VoiceInput.exe (~80 MB; WPF can't be trimmed)
+make install    # publish + install to %LOCALAPPDATA% + auto-start + launch
+make release VERSION=v0.1.0   # publish + attach the exe to a GitHub Enterprise release
 ```
 
 Or directly:
@@ -41,6 +63,8 @@ Or directly:
 ```bash
 dotnet run --project src/VoiceInput/VoiceInput.csproj
 ```
+
+The exe is self-contained, so end users do **not** need the .NET runtime installed.
 
 ### Signing
 

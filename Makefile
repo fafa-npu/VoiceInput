@@ -15,7 +15,12 @@ SIGN_PWD     ?=
 SIGN_SUBJECT ?=
 TIMESTAMP_URL ?= http://timestamp.digicert.com
 
-.PHONY: build run clean publish sign restore
+# Release (GitHub Enterprise) settings
+VERSION  ?= v0.1.0
+GHE_HOST ?= microsoft.ghe.com
+GHE_REPO ?= Zhao-Hua/VoiceInput
+
+.PHONY: build run clean publish sign restore install release
 
 restore:
 	dotnet restore $(PROJECT)
@@ -48,6 +53,14 @@ else
 	@echo "[sign] skipped - provide SIGN_PFX/SIGN_PWD or SIGN_SUBJECT to Authenticode-sign the exe."
 endif
 
-# Copy the published exe to the per-user app folder and create a Startup shortcut.
+# One-click: build, copy to %LOCALAPPDATA%, enable auto-start, and launch.
 install: publish
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Source "$(PUBLISH_DIR)/VoiceInput.exe"
+
+# Cut a GitHub Enterprise release with the self-contained exe attached, so others can
+# download VoiceInput.exe directly (no .NET SDK needed). One-time: gh auth login --hostname $(GHE_HOST)
+release: publish
+	GH_HOST=$(GHE_HOST) gh release create $(VERSION) "$(PUBLISH_DIR)/VoiceInput.exe#VoiceInput.exe" \
+		--repo $(GHE_REPO) --title "VoiceInput $(VERSION)" \
+		--notes "Self-contained Windows build — no .NET install needed. Download VoiceInput.exe and double-click to run, or for auto-start at login: scripts/install.ps1 -Source VoiceInput.exe" \
+		|| echo "[release] gh failed — run 'gh auth login --hostname $(GHE_HOST)' once, then 'make release VERSION=$(VERSION)'."

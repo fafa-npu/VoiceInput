@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows.Threading;
 using VoiceInput.Interop;
 using static VoiceInput.Interop.NativeMethods;
 
@@ -12,8 +13,9 @@ namespace VoiceInput.Services;
 /// (e.g. Right-Ctrl+C) we cancel the gesture and let the chord through untouched. Only a
 /// clean press-and-release of the PTT key alone fires <see cref="Released"/>.
 ///
-/// The callback stays trivial (set flags, raise events) to respect the LowLevelHooksTimeout
-/// cap; consumers marshal to the UI thread themselves.
+/// A watchdog timer recovers from two failure modes the hook alone can't: a missed key-up
+/// (UAC prompt / lock screen / another hook swallowing it) that would otherwise wedge the
+/// "held" state, and Windows silently dropping the hook on LowLevelHooksTimeout.
 /// </summary>
 public sealed class KeyboardHook : IDisposable
 {
@@ -26,6 +28,9 @@ public sealed class KeyboardHook : IDisposable
 
     private readonly LowLevelKeyboardProc _proc;   // kept alive in a field so the GC can't collect it
     private IntPtr _hook = IntPtr.Zero;
+    private IntPtr _moduleHandle = IntPtr.Zero;
+    private DispatcherTimer? _watchdog;
+    private int _idleTicks;
     private int _pttVk;
     private bool _pttDown;
     private bool _chorded;
@@ -41,10 +46,17 @@ public sealed class KeyboardHook : IDisposable
     public void Install()
     {
         if (_hook != IntPtr.Zero) return;
-        using var mod = System.Diagnostics.Process.GetCurrentProcess().MainModule!;
-        _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(mod.ModuleName), 0);
+        using (var mod = System.Diagnostics.Process.GetCurrentProcess().MainModule!)
+            _moduleHandle = GetModuleHandle(mod.ModuleName);
+        _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, _moduleHandle, 0);
         if (_hook == IntPtr.Zero)
             throw new InvalidOperationException("Failed to install keyboard hook: " + Marshal.GetLastWin32Error());
+
+        // Runs on the UI thread (where Install is called); GetAsyncKeyState polling and
+        // re-installing the hook both require that context.
+        _watchdog = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _watchdog.Tick += Watchdog;
+        _watchdog.Start();
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -53,7 +65,6 @@ public sealed class KeyboardHook : IDisposable
             return CallNextHookEx(_hook, nCode, wParam, lParam);
 
         var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-        // Ignore our own injected Ctrl+V so we don't trigger on it.
         bool injected = (data.flags & LLKHF_INJECTED) != 0 || data.dwExtraInfo == InjectionTag;
         if (injected)
             return CallNextHookEx(_hook, nCode, wParam, lParam);
@@ -77,7 +88,6 @@ public sealed class KeyboardHook : IDisposable
             }
             else if (_pttDown && !_chorded)
             {
-                // Another key chorded while PTT held -> this is a shortcut, not dictation.
                 _chorded = true;
                 Cancelled?.Invoke();
             }
@@ -90,8 +100,38 @@ public sealed class KeyboardHook : IDisposable
             _chorded = false;
         }
 
-        // Never suppress: keep system shortcuts intact for the default PTT key.
         return CallNextHookEx(_hook, nCode, wParam, lParam);
+    }
+
+    private void Watchdog(object? sender, EventArgs e)
+    {
+        if (_pttDown)
+        {
+            // Reconcile a key-up the hook never saw (secure desktop, focus loss, another hook).
+            bool physicallyDown = (GetAsyncKeyState(_pttVk) & 0x8000) != 0;
+            if (!physicallyDown)
+            {
+                bool fireReleased = !_chorded;
+                _pttDown = false;
+                _chorded = false;
+                if (fireReleased) Released?.Invoke();   // chorded sessions were already cancelled
+            }
+            _idleTicks = 0;
+        }
+        else if (++_idleTicks >= 10)   // ~5s idle: re-assert the hook in case Windows silently dropped it
+        {
+            _idleTicks = 0;
+            Reinstall();
+        }
+    }
+
+    private void Reinstall()
+    {
+        var fresh = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, _moduleHandle, 0);
+        if (fresh == IntPtr.Zero) return;   // keep the existing hook if re-registration failed
+        var old = _hook;
+        _hook = fresh;
+        if (old != IntPtr.Zero) UnhookWindowsHookEx(old);
     }
 
     private static int ResolveVk(string key) => key switch
@@ -105,6 +145,8 @@ public sealed class KeyboardHook : IDisposable
 
     public void Dispose()
     {
+        _watchdog?.Stop();
+        _watchdog = null;
         if (_hook != IntPtr.Zero)
         {
             UnhookWindowsHookEx(_hook);

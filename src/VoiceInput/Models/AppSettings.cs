@@ -33,6 +33,10 @@ public sealed class AppSettings
     public string LlmApiKey { get; set; } = string.Empty;
     public string LlmModel { get; set; } = "gpt-4.1-mini";
 
+    /// <summary>When true, the log records transcript / LLM text verbatim (for debugging).
+    /// Off by default — dictated speech can contain passwords and other secrets.</summary>
+    public bool DiagnosticLogging { get; set; }
+
     public AppSettings Clone() => (AppSettings)MemberwiseClone();
 
     /// <summary>The five recognition languages offered in the tray menu.</summary>
