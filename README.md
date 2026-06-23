@@ -55,7 +55,7 @@ make build      # compile
 make run        # run from source (Debug)
 make publish    # self-contained single-file exe -> publish/VoiceInput.exe (~80 MB; WPF can't be trimmed)
 make install    # publish + install to %LOCALAPPDATA% + auto-start + launch
-make release VERSION=v0.1.0   # publish + attach the exe to a GitHub Enterprise release
+make release VERSION=v0.1.1   # build the versioned exe + publish a GHE release (scripts/release.ps1)
 ```
 
 Or directly:
@@ -65,6 +65,24 @@ dotnet run --project src/VoiceInput/VoiceInput.csproj
 ```
 
 The exe is self-contained, so end users do **not** need the .NET runtime installed.
+
+## Updates
+
+The app shows its version in the tray menu and checks the latest GHE release at startup (and via
+**Check for updates…**). When a newer release exists, the menu offers **Update to vX.Y.Z…**, which
+downloads the new exe and restarts — **only when the user chooses it** (never automatic).
+
+Releasing is REST-based (`scripts/release.ps1`) because older `gh` mishandles this GHE instance's
+asset upload. Cut a new version with:
+
+```bash
+make release VERSION=v0.1.1
+```
+
+This bakes `v0.1.1` into the exe, creates the release, and uploads `VoiceInput.exe`. The update
+check and download use the GHE REST API with the token from `gh auth` — so users need
+`gh auth login --hostname microsoft.ghe.com` once for in-app updates (downloading from the
+Releases page in a browser needs no setup).
 
 ### Signing
 

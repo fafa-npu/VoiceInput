@@ -25,6 +25,7 @@ public sealed class AppController : IDisposable
     private readonly LlmRefiner _refiner = new();
     private readonly UpdateService _updater = new();
     private string? _availableUpdateTag;
+    private string? _availableAssetUrl;
 
     private OverlayWindow? _overlay;
     private WinForms.NotifyIcon? _tray;
@@ -432,6 +433,7 @@ public sealed class AppController : IDisposable
             {
                 case UpdateService.CheckOutcome.UpdateAvailable:
                     _availableUpdateTag = result.LatestTag;
+                    _availableAssetUrl = result.AssetApiUrl;
                     Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
                     RebuildMenu();
                     break;
@@ -451,6 +453,12 @@ public sealed class AppController : IDisposable
 
     private void PromptAndApplyUpdate(string tag)
     {
+        if (_availableAssetUrl is null)
+        {
+            Notify("Update unavailable", $"{tag} has no downloadable VoiceInput.exe asset.");
+            return;
+        }
+
         var answer = MessageBox.Show(
             $"Update to {tag} now?\n\nVoiceInput will download the new version and restart.",
             "VoiceInput update", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -462,7 +470,7 @@ public sealed class AppController : IDisposable
 
     private async Task ApplyUpdateAsync(string tag)
     {
-        bool ok = await _updater.DownloadAndApplyAsync(tag);
+        bool ok = _availableAssetUrl is not null && await _updater.DownloadAndApplyAsync(_availableAssetUrl);
         _ = _ui.BeginInvoke(() =>
         {
             if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches

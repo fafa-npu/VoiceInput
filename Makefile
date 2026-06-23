@@ -57,16 +57,8 @@ endif
 install: publish
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Source "$(PUBLISH_DIR)/VoiceInput.exe"
 
-# Cut a GitHub Enterprise release with the self-contained exe attached (version baked in so the
-# in-app update check compares correctly), so others can download VoiceInput.exe directly (no .NET
-# SDK needed). One-time: gh auth login --hostname $(GHE_HOST). Bump src/VoiceInput <Version> to match.
+# Build a versioned self-contained exe and publish it as a GHE release (asset uploaded via REST,
+# since older gh mishandles this instance's upload endpoint). The version is baked into the exe so
+# the in-app update check compares correctly. One-time: gh auth login --hostname $(GHE_HOST).
 release:
-	dotnet publish $(PROJECT) -c $(CONFIG) -r $(RID) \
-		-p:Version=$(VERSION:v%=%) \
-		-p:SelfContained=true -p:PublishSingleFile=true \
-		-p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true \
-		-o $(PUBLISH_DIR)
-	GH_HOST=$(GHE_HOST) gh release create $(VERSION) "$(PUBLISH_DIR)/VoiceInput.exe#VoiceInput.exe" \
-		--repo $(GHE_REPO) --title "VoiceInput $(VERSION)" \
-		--notes "Self-contained Windows build — no .NET install needed. Download VoiceInput.exe and double-click to run, or for auto-start at login: scripts/install.ps1 -Source VoiceInput.exe" \
-		|| echo "[release] gh failed — run 'gh auth login --hostname $(GHE_HOST)' once, then 'make release VERSION=$(VERSION)'."
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version $(VERSION)
