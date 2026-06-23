@@ -26,8 +26,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $AppName    = 'VoiceInput'
 $ExeName    = 'VoiceInput.exe'
-$InstallDir = Join-Path $env:LOCALAPPDATA $AppName
-$StartupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) ($AppName + '.lnk')
+$InstallDir   = Join-Path $env:LOCALAPPDATA $AppName
+$StartupLnk   = Join-Path ([Environment]::GetFolderPath('Startup')) ($AppName + '.lnk')
+$StartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($AppName + '.lnk')
+
+function New-AppShortcut($path) {
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($path)
+    $lnk.TargetPath       = Join-Path $InstallDir $ExeName
+    $lnk.WorkingDirectory = $InstallDir
+    $lnk.Description       = 'VoiceInput - hold-to-talk voice input'
+    $lnk.Save()
+}
 
 function Stop-App {
     Get-Process $AppName -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -37,6 +47,7 @@ function Stop-App {
 if ($Uninstall) {
     Stop-App
     if (Test-Path $StartupLnk) { Remove-Item $StartupLnk -Force }
+    if (Test-Path $StartMenuLnk) { Remove-Item $StartMenuLnk -Force }
     if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
     Write-Host 'VoiceInput uninstalled.' -ForegroundColor Green
     return
@@ -73,14 +84,10 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item $Source (Join-Path $InstallDir $ExeName) -Force
 Write-Host "Installed to $InstallDir\$ExeName" -ForegroundColor Green
 
-# Auto-start at login via a Startup-folder shortcut.
-$shell = New-Object -ComObject WScript.Shell
-$lnk = $shell.CreateShortcut($StartupLnk)
-$lnk.TargetPath       = Join-Path $InstallDir $ExeName
-$lnk.WorkingDirectory = $InstallDir
-$lnk.Description       = 'VoiceInput - hold-to-talk voice input'
-$lnk.Save()
-Write-Host 'Auto-start enabled (runs at login).' -ForegroundColor Green
+# Auto-start at login (Startup folder) + a Start Menu entry so it's launchable by name.
+New-AppShortcut $StartupLnk
+New-AppShortcut $StartMenuLnk
+Write-Host 'Auto-start enabled (runs at login); Start Menu entry created.' -ForegroundColor Green
 
 if (-not $NoLaunch) {
     Start-Process (Join-Path $InstallDir $ExeName)
