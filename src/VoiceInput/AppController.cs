@@ -36,6 +36,9 @@ public sealed class AppController : IDisposable
     // Serializes the start/stop/cancel lifecycle so sessions can never overlap
     // (Windows dictation forbids overlapping audio-engine sessions).
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _finalsLock = new();   // guards _finals/_partial across engine + UI threads
+    private const int StartTimeoutMs = 8000;
+    private const int EngineStopTimeoutMs = 2500;
 
     public AppController()
     {
@@ -69,27 +72,32 @@ public sealed class AppController : IDisposable
             if (_dictating) return;
             DisposeEngine();           // safety: clear any engine a prior session failed to tear down
             _dictating = true;
-            _finals.Clear();
-            _partial = string.Empty;
+            ClearTranscript();
             _level = 0;
-
-            _overlay!.ShowListening(Placeholder());
-            _audio.Start();
-
-            _engine = CreateEngine(out bool azureFellBack);
-            if (azureFellBack)
-                Notify("Azure key not set", "Falling back to Windows on-device recognition.");
-
-            Log.Write($"PTT engaged -> start dictation (engine={_engine.GetType().Name}, lang={_settings.Language}, azureFellBack={azureFellBack})");
-
-            _engine.Partial += OnPartial;
-            _engine.Final += OnFinal;
-            if (_engine.NeedsAudioFeed)
-                _audio.PcmChunkAvailable += OnPcm;
 
             try
             {
-                await _engine.StartAsync(_settings.Language);
+                // Fragile setup is inside the try so any failure (e.g. no microphone) routes through
+                // AbortInternalAsync and resets _dictating, instead of permanently wedging the app.
+                _overlay!.ShowListening(Placeholder());
+                _audio.Start();
+
+                _engine = CreateEngine(out bool azureFellBack);
+                if (azureFellBack)
+                    Notify("Azure key not set", "Falling back to Windows on-device recognition.");
+
+                Log.Write($"PTT engaged -> start dictation (engine={_engine.GetType().Name}, lang={_settings.Language}, azureFellBack={azureFellBack})");
+
+                _engine.Partial += OnPartial;
+                _engine.Final += OnFinal;
+                if (_engine.NeedsAudioFeed)
+                    _audio.PcmChunkAvailable += OnPcm;
+
+                // Bound StartAsync so a hung SDK call can't hold the gate forever (real errors still propagate).
+                var startTask = _engine.StartAsync(_settings.Language);
+                if (await Task.WhenAny(startTask, Task.Delay(StartTimeoutMs)) != startTask)
+                    throw new TimeoutException("Speech engine start timed out.");
+                await startTask;
                 Log.Write("Engine started OK, listening…");
             }
             catch (SpeechLanguageUnavailableException ex)
@@ -110,7 +118,7 @@ public sealed class AppController : IDisposable
             }
             catch (Exception ex)
             {
-                Log.Error("StartAsync", ex);
+                Log.Error("StartDictation", ex);
                 Notify("Recognition failed", ex.Message);
                 await AbortInternalAsync();
             }
@@ -181,8 +189,7 @@ public sealed class AppController : IDisposable
     {
         _dictating = false;
         await TeardownEngineAsync();
-        _finals.Clear();
-        _partial = string.Empty;
+        ClearTranscript();
         _overlay?.HideAnimated();
     }
 
@@ -192,11 +199,12 @@ public sealed class AppController : IDisposable
     /// </summary>
     private async Task TeardownEngineAsync()
     {
+        // Unsubscribe the PCM feed before stopping audio so no in-flight callback can Feed a closing engine.
+        if (_engine is not null && _engine.NeedsAudioFeed) _audio.PcmChunkAvailable -= OnPcm;
         _audio.Stop();
         if (_engine is not null)
         {
-            if (_engine.NeedsAudioFeed) _audio.PcmChunkAvailable -= OnPcm;
-            bool stopped = await TryAwait(_engine.StopAsync(), 2500);
+            bool stopped = await TryAwait(_engine.StopAsync(), EngineStopTimeoutMs);
             if (!stopped) Log.Write("WARN engine.StopAsync timed out; forcing dispose.");
         }
         DisposeEngine();
@@ -212,31 +220,41 @@ public sealed class AppController : IDisposable
 
     private void OnPartial(string text)
     {
-        _partial = text;
+        lock (_finalsLock) { _partial = text; }
         _ui.BeginInvoke(() => _overlay?.SetText(ComposeTranscript()));
     }
 
     private void OnFinal(string segment)
     {
-        AppendFinal(segment);
-        _partial = string.Empty;
+        lock (_finalsLock)
+        {
+            if (_finals.Length > 0 && NeedsSpace()) _finals.Append(' ');
+            _finals.Append(segment);
+            _partial = string.Empty;
+        }
         _ui.BeginInvoke(() => _overlay?.SetText(ComposeTranscript()));
     }
 
     private void OnPcm(byte[] pcm) => _engine?.Feed(pcm);
 
-    private void AppendFinal(string segment)
-    {
-        if (_finals.Length > 0 && NeedsSpace())
-            _finals.Append(' ');
-        _finals.Append(segment);
-    }
-
+    // _finals/_partial are touched by engine callback threads and the UI thread; guard every access.
     private string ComposeTranscript()
     {
-        if (_partial.Length == 0) return _finals.ToString();
-        if (_finals.Length == 0) return _partial;
-        return _finals + (NeedsSpace() ? " " : string.Empty) + _partial;
+        lock (_finalsLock)
+        {
+            if (_partial.Length == 0) return _finals.ToString();
+            if (_finals.Length == 0) return _partial;
+            return _finals + (NeedsSpace() ? " " : string.Empty) + _partial;
+        }
+    }
+
+    private void ClearTranscript()
+    {
+        lock (_finalsLock)
+        {
+            _finals.Clear();
+            _partial = string.Empty;
+        }
     }
 
     private bool NeedsSpace() =>

@@ -15,8 +15,10 @@ public sealed class AudioCapture : IDisposable
     public event Action<byte[]>? PcmChunkAvailable;
 
     private WasapiCapture? _capture;
-    private float _carry;        // fractional sample position carried across resample buffers
+    private volatile bool _stopped = true;   // guards callbacks that race teardown
+    private float _carry;                     // fractional sample position carried across buffers
     private float _lastSample;
+    private float[] _mono = Array.Empty<float>();   // reused across callbacks (they are serialized)
 
     public const int TargetSampleRate = 16000;
 
@@ -29,6 +31,7 @@ public sealed class AudioCapture : IDisposable
             _capture.DataAvailable += OnDataAvailable;
             _carry = 0f;
             _lastSample = 0f;
+            _stopped = false;
             _capture.StartRecording();
             var f = _capture.WaveFormat;
             Log.Write($"Audio capture started: {f.SampleRate}Hz {f.Channels}ch {f.BitsPerSample}bit {f.Encoding}");
@@ -42,6 +45,7 @@ public sealed class AudioCapture : IDisposable
 
     public void Stop()
     {
+        _stopped = true;            // set first so in-flight callbacks bail out
         if (_capture is null) return;
         try
         {
@@ -55,20 +59,20 @@ public sealed class AudioCapture : IDisposable
 
     private void OnDataAvailable(object? sender, WaveInEventArgs e)
     {
-        var fmt = _capture!.WaveFormat;
+        var capture = _capture;
+        if (_stopped || capture is null) return;
+
+        var fmt = capture.WaveFormat;
         int channels = fmt.Channels;
 
-        // Decode to a mono float buffer regardless of source encoding.
         float[] mono = ToMonoFloat(e.Buffer, e.BytesRecorded, fmt, channels, out int frames);
         if (frames == 0) return;
 
-        // RMS for the meter.
         double sum = 0;
         for (int i = 0; i < frames; i++) sum += mono[i] * mono[i];
         float rms = (float)Math.Sqrt(sum / frames);
         LevelChanged?.Invoke(Math.Clamp(rms * 5.0f, 0f, 1f));
 
-        // Resample to 16 kHz mono int16 for the recognizer push stream.
         if (PcmChunkAvailable is not null)
         {
             byte[] pcm = ResampleTo16kPcm16(mono, frames, fmt.SampleRate);
@@ -76,13 +80,18 @@ public sealed class AudioCapture : IDisposable
         }
     }
 
-    private static float[] ToMonoFloat(byte[] buffer, int bytes, WaveFormat fmt, int channels, out int frames)
+    /// <summary>Decode to mono float into the reused <see cref="_mono"/> buffer (callbacks are serialized).</summary>
+    private float[] ToMonoFloat(byte[] buffer, int bytes, WaveFormat fmt, int channels, out int frames)
     {
-        if (fmt.Encoding == WaveFormatEncoding.IeeeFloat && fmt.BitsPerSample == 32)
+        bool isFloat = fmt.Encoding == WaveFormatEncoding.IeeeFloat && fmt.BitsPerSample == 32;
+        int bytesPerSample = isFloat ? 4 : 2;
+        frames = bytes / (bytesPerSample * channels);
+        if (frames == 0) return _mono;
+        if (_mono.Length < frames) _mono = new float[frames];
+        var mono = _mono;
+
+        if (isFloat)
         {
-            int total = bytes / 4;
-            frames = total / channels;
-            var mono = new float[frames];
             for (int f = 0; f < frames; f++)
             {
                 float acc = 0;
@@ -90,24 +99,24 @@ public sealed class AudioCapture : IDisposable
                     acc += BitConverter.ToSingle(buffer, (f * channels + c) * 4);
                 mono[f] = acc / channels;
             }
-            return mono;
         }
-
-        // Assume 16-bit PCM otherwise.
-        int totalS = bytes / 2;
-        frames = totalS / channels;
-        var monoP = new float[frames];
-        for (int f = 0; f < frames; f++)
+        else
         {
-            int acc = 0;
-            for (int c = 0; c < channels; c++)
-                acc += (short)(buffer[(f * channels + c) * 2] | (buffer[(f * channels + c) * 2 + 1] << 8));
-            monoP[f] = acc / (channels * 32768f);
+            for (int f = 0; f < frames; f++)
+            {
+                int acc = 0;
+                for (int c = 0; c < channels; c++)
+                {
+                    int o = (f * channels + c) * 2;
+                    acc += (short)(buffer[o] | (buffer[o + 1] << 8));
+                }
+                mono[f] = acc / (channels * 32768f);
+            }
         }
-        return monoP;
+        return mono;
     }
 
-    /// <summary>Simple linear-interpolation downsample to 16 kHz, then to little-endian int16 bytes.</summary>
+    /// <summary>Linear-interpolation downsample to 16 kHz int16, allocation-light (one output array).</summary>
     private byte[] ResampleTo16kPcm16(float[] mono, int frames, int sourceRate)
     {
         if (sourceRate == TargetSampleRate)
@@ -118,7 +127,8 @@ public sealed class AudioCapture : IDisposable
         }
 
         double step = (double)sourceRate / TargetSampleRate;
-        var outSamples = new List<byte>(capacity: (int)(frames / step) * 2 + 4);
+        var outBuf = new byte[((int)(frames / step) + 2) * 2];
+        int outIdx = 0;
         double pos = _carry;
         while (pos < frames)
         {
@@ -127,17 +137,14 @@ public sealed class AudioCapture : IDisposable
             float a = idx == 0 ? _lastSample : mono[idx - 1];
             float b = mono[idx];
             float sample = a + (b - a) * frac;
-            int offset = outSamples.Count;
-            outSamples.Add(0); outSamples.Add(0);
-            var tmp = new byte[2];
-            WriteSample(tmp, 0, sample);
-            outSamples[offset] = tmp[0];
-            outSamples[offset + 1] = tmp[1];
+            if (outIdx + 2 > outBuf.Length) Array.Resize(ref outBuf, outBuf.Length + 64);
+            WriteSample(outBuf, outIdx, sample);
+            outIdx += 2;
             pos += step;
         }
-        _carry = (float)(pos - frames);        // keep sub-sample phase for the next buffer
+        _carry = (float)(pos - frames);
         _lastSample = mono[frames - 1];
-        return outSamples.ToArray();
+        return outIdx == outBuf.Length ? outBuf : outBuf[..outIdx];
     }
 
     private static void WriteSample(byte[] dst, int offset, float sample)

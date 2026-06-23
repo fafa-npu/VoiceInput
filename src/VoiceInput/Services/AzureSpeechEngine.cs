@@ -16,6 +16,7 @@ public sealed class AzureSpeechEngine(string subscriptionKey, string region) : I
     private SpeechRecognizer? _recognizer;
     private PushAudioInputStream? _push;
     private AudioConfig? _audioConfig;
+    private volatile bool _closed;   // set before teardown so Feed stops writing the push stream
 
     public async Task StartAsync(string language)
     {
@@ -36,14 +37,25 @@ public sealed class AzureSpeechEngine(string subscriptionKey, string region) : I
             if (e.Result.Reason == ResultReason.RecognizedSpeech && !string.IsNullOrEmpty(e.Result.Text))
                 Final?.Invoke(e.Result.Text);
         };
+        // Auth failures, quota, and network drops surface here (not as a StartAsync exception).
+        _recognizer.Canceled += (_, e) =>
+        {
+            if (e.Reason == CancellationReason.Error)
+                Log.Write($"AzureSpeechEngine canceled: {e.ErrorCode} - {e.ErrorDetails}");
+        };
 
         await _recognizer.StartContinuousRecognitionAsync();
     }
 
-    public void Feed(byte[] pcm16kMono) => _push?.Write(pcm16kMono);
+    public void Feed(byte[] pcm16kMono)
+    {
+        if (_closed) return;
+        _push?.Write(pcm16kMono);
+    }
 
     public async Task StopAsync()
     {
+        _closed = true;
         try
         {
             _push?.Close();
@@ -55,6 +67,7 @@ public sealed class AzureSpeechEngine(string subscriptionKey, string region) : I
 
     public void Dispose()
     {
+        _closed = true;
         try { _recognizer?.Dispose(); } catch { }
         try { _audioConfig?.Dispose(); } catch { }
         try { _push?.Dispose(); } catch { }
