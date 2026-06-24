@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- windows10.0.19041 TFM gives the WinRT projection (Windows.Media.SpeechRecognition).
+         SupportedOSPlatformVersion keeps the runtime floor at Windows 10 1903. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.18362.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms only for the system-tray NotifyIcon. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>VoiceInput</AssemblyName>
+    <RootNamespace>VoiceInput</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <!-- Bump per release; `make release VERSION=vX.Y.Z` bakes the matching version into the build. -->
+    <Version>0.1.7</Version>
+    <!-- WPF cannot be trimmed; never enable PublishTrimmed. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- WPF owns DPI awareness via app.manifest (PerMonitorV2); silence the WinForms-only DPI analyzer. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.3.0" />
+    <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.43.0" />
+  </ItemGroup>
+
+  <!-- This is a WPF app; WinForms is only used (fully qualified) for the tray NotifyIcon.
+       Drop the WinForms/Drawing implicit global usings so names like Application/Brush/Color
+       resolve unambiguously to their WPF equivalents. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+</Project>
