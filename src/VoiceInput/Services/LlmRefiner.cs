@@ -77,13 +77,14 @@ public sealed class LlmRefiner
     {
         string url = settings.LlmBaseUrl.TrimEnd('/') + "/chat/completions";
 
+        string sys = string.IsNullOrWhiteSpace(settings.LlmPrompt) ? SystemPrompt : settings.LlmPrompt;
         var payload = new
         {
             model = settings.LlmModel,
             temperature = 0,
             messages = new object[]
             {
-                new { role = "system", content = SystemPrompt },
+                new { role = "system", content = sys },
                 new { role = "user", content = userText },
             },
         };

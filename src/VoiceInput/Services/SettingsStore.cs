@@ -49,6 +49,7 @@ public sealed class SettingsStore
                 LlmEnabled = dto.LlmEnabled,
                 LlmBaseUrl = dto.LlmBaseUrl,
                 LlmModel = dto.LlmModel,
+                LlmPrompt = dto.LlmPrompt,
                 LlmApiKey = Unprotect(dto.LlmApiKeyEnc),
                 DiagnosticLogging = dto.DiagnosticLogging,
                 UseContext = dto.UseContext,
@@ -74,6 +75,7 @@ public sealed class SettingsStore
             LlmEnabled = s.LlmEnabled,
             LlmBaseUrl = s.LlmBaseUrl,
             LlmModel = s.LlmModel,
+            LlmPrompt = s.LlmPrompt,
             LlmApiKeyEnc = Protect(s.LlmApiKey),
             DiagnosticLogging = s.DiagnosticLogging,
             UseContext = s.UseContext,
@@ -115,6 +117,7 @@ public sealed class SettingsStore
         public bool LlmEnabled { get; set; }
         public string LlmBaseUrl { get; set; } = "https://api.openai.com/v1";
         public string LlmModel { get; set; } = "gpt-4.1-mini";
+        public string LlmPrompt { get; set; } = string.Empty;
         public string LlmApiKeyEnc { get; set; } = string.Empty;
         public bool DiagnosticLogging { get; set; }
         public bool UseContext { get; set; }

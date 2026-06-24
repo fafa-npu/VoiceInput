@@ -1,123 +1,95 @@
 # VoiceInput (Windows)
 
 A system-tray, hold-to-talk voice input method for Windows — the Windows port of the macOS
-menu-bar dictation app. Hold a key, speak, release, and the transcribed text is injected into
+menu-bar dictation app. Hold a key, speak, release, and the transcribed text is typed into
 whatever input field has focus.
 
 Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
+## What makes it different
+
+Most dictation tools just dump raw speech-to-text. VoiceInput adds a **speech-aware LLM refinement
+layer** on top:
+
+- **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
+  errors speech recognition actually makes — Chinese homophones / near-homophones, and tech terms
+  misheard into phonetics (配森 → Python, 杰森 → JSON, 瑞克特 → React) — instead of treating them
+  as typos. It also adds punctuation, strips filler words (嗯 / 呃 / um / uh / you know), and
+  **never translates** or rewrites correct text.
+- **Context-aware refinement.** Opt in and it reads the text around your cursor — including your
+  **terminal buffer** — via UI Automation, and feeds it to the LLM as context. Say a branch name
+  it mishears and it corrects to the real one on screen (`瑞法克特` → `query-inspector-refactor`).
+- **Fully customizable prompt.** The refine system prompt is yours to change — set `LlmPrompt` in
+  `settings.json` to tune the behavior, or leave it blank for the built-in speech-aware default.
+- **Bring your own model.** Any OpenAI-compatible endpoint (Base URL / Key / Model).
+
 ## Features
 
-- **Hold-to-talk.** Hold the push-to-talk key (default **Right Ctrl**, rebindable in the tray
-  menu) to record; release to transcribe and inject. Chord-aware: pressing another key while the
-  PTT key is held (e.g. Right-Ctrl+C) cancels dictation and lets the shortcut through. A watchdog
-  recovers if a key-up is ever missed (UAC / lock screen).
-  > The macOS version uses **Fn**; on Windows the Fn key is handled in keyboard firmware and is
-  > not visible to software, so a standard key is used instead.
-- **Default language Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 /
-  한국어 from the tray.
-- **Streaming recognition** via the **Azure Speech SDK** (best zh-CN quality, needs a key/region)
-  with **Windows on-device dictation** as the no-key fallback. Switch engines from the tray.
-- **Elegant capsule overlay** at the bottom-center with a live, RMS-driven 5-bar waveform and the
-  running transcript. It **follows the monitor you're working on** (multi-monitor aware), grows
-  smoothly with the text, and shows the **latest words** of a long transcript (tail) instead of
-  clipping them.
-- **IME-aware injection.** Pastes via clipboard + Ctrl+V, temporarily closing the target window's
-  IME so a CJK input method can't intercept the paste, then restoring IME state and clipboard.
-- **Optional LLM refinement** via any OpenAI-compatible API: fixes obvious recognition errors
-  (e.g. 配森 → Python, 杰森 → JSON), **adds punctuation**, and **removes filler words / hesitations**
-  (嗯 / 呃 / 那个 / um / uh / you know …) — while **never translating** or rewriting meaningful text.
-- **Single instance**, **tray-only** (no taskbar window), custom microphone tray icon. API keys are
-  encrypted at rest with Windows **DPAPI**; the diagnostic log never records transcript text by
-  default.
+- **Hold-to-talk.** Hold the push-to-talk key (default **Right Ctrl**, rebindable) to record;
+  release to transcribe and inject. Chord-aware (Right-Ctrl+C still works); a watchdog recovers a
+  missed key-up (UAC / lock screen).
+  > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
+  > key is used.
+- **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어.
+- **Streaming recognition** via the **Azure Speech SDK** (best zh-CN), with **Windows on-device
+  dictation** as the no-key fallback.
+- **Capsule overlay** at the bottom of the active monitor (multi-monitor aware) with a live,
+  RMS-driven waveform and the running transcript; grows smoothly and shows the latest words.
+- **Reliable injection** by typing the characters directly (SendInput Unicode), so it lands in
+  Chromium/Electron apps too (Microsoft 365 Copilot, Teams) — no clipboard or IME side-effects.
+- **Single instance**, **tray-only**, custom mic icon. API keys are DPAPI-encrypted at rest; the
+  log never records transcript text unless you turn on diagnostic logging.
 
 ## Controls
 
-| Action                      | How                                                                                    |
-| --------------------------- | -------------------------------------------------------------------------------------- |
-| **Talk**                    | Hold **Right Ctrl** (rebindable: tray → Push-to-talk key), speak, release              |
-| **Start the app**           | Start Menu → search **VoiceInput**, or it auto-starts at login                         |
-| **Quit**                    | Right-click the tray icon (blue mic, bottom-right) → **Quit**                          |
-| **Pause / resume**          | Tray → **Pause listening** / **Resume listening** (stays running, ignores the PTT key) |
-| **Auto-start at login**     | Tray → **Start at login** (toggle on/off)                                              |
-| **Language / engine / LLM** | Tray submenus + **Settings…**                                                          |
-| **Check for updates**       | Tray → **Check for updates…**                                                          |
+| Action                   | How                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| **Talk**                 | Hold **Right Ctrl** (rebindable: tray → Push-to-talk key), speak, release            |
+| **Start**                | Start Menu → **VoiceInput**, or it auto-starts at login                              |
+| **Quit**                 | Tray icon → **Quit**                                                                 |
+| **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
+| **Context-aware refine** | Tray → **Use surrounding context (UIA)** (off by default; sends app text to the LLM) |
+| **Settings**             | Tray → **Settings…** (engine / Azure / LLM)                                          |
 
-Launching a second copy while one is running does nothing — the second instance exits silently.
+## Install
 
-## Install (one-click)
-
-**From a cloned repo** (needs the .NET 10 SDK — builds, installs to `%LOCALAPPDATA%`, adds Start
-Menu + auto-start shortcuts, and launches):
+**One line, no clone** (downloads the latest release exe, installs to `%LOCALAPPDATA%`, adds Start
+Menu + auto-start, and launches) — in PowerShell:
 
 ```powershell
-git clone https://microsoft.ghe.com/Zhao-Hua/VoiceInput.git
-cd VoiceInput
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+$s="$env:TEMP\vi.ps1"; iwr https://microsoft.ghe.com/Zhao-Hua/VoiceInput/raw/main/scripts/install.ps1 -OutFile $s; powershell -ExecutionPolicy Bypass -File $s
 ```
 
-**From a prebuilt release** (no .NET SDK needed) — download `VoiceInput.exe` from the
-[Releases](https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases) page, then either just
-double-click it to run, or install with auto-start + Start Menu entry:
+Or just download `VoiceInput.exe` from the
+[Releases](https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases) page and double-click it
+(it's self-contained — no .NET runtime needed).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -Source .\VoiceInput.exe
-```
-
-Uninstall any time (stops it, removes the install + both shortcuts): `scripts\install.ps1 -Uninstall`.
+Uninstall: `scripts\install.ps1 -Uninstall`.
 
 ## Configuration
 
-Tray → **Settings…**:
+Tray → **Settings…** for engine + Azure key/region + LLM (Base URL / Key / Model, default
+`gpt-4.1-mini`). To customize the refine prompt, set `LlmPrompt` in
+`%APPDATA%\VoiceInput\settings.json` (secret fields are DPAPI-encrypted per-user).
 
-- **Speech Engine** — Windows (on-device) or Azure Speech (Key + Region).
-- **LLM refinement** — enable + API Base URL / API Key / Model (default `gpt-4.1-mini`).
-  Test and Save buttons.
+## Build (developers)
 
-`%APPDATA%\VoiceInput\settings.json` — secret fields (Azure key, LLM key) are DPAPI-encrypted
-(per-user); only the current Windows user can decrypt them.
-
-## Build & run (developers)
-
-Requires the **.NET 10 SDK** and the **Windows Desktop** runtime.
+Needs the **.NET 10 SDK**.
 
 ```bash
-make build      # compile
-make run        # run from source (Debug)
-make publish    # self-contained single-file exe -> publish/VoiceInput.exe (~80 MB; WPF can't be trimmed)
-make install    # publish + install to %LOCALAPPDATA% + Start Menu + auto-start + launch
-make release VERSION=vX.Y.Z   # build the versioned exe + publish a GHE release (scripts/release.ps1)
+make run        # run from source
+make install    # build + install to %LOCALAPPDATA% + auto-start + launch
+make release VERSION=vX.Y.Z   # build the versioned exe + publish a release (scripts/release.ps1)
 ```
 
-Or directly: `dotnet run --project src/VoiceInput/VoiceInput.csproj`.
-The exe is self-contained, so end users do **not** need the .NET runtime installed.
+The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists
+— downloaded and applied only when you choose it (never automatic).
 
-## Updates
+## Notes
 
-The app shows its version in the tray, checks the latest GHE release at startup (and via
-**Check for updates…**), and offers **Update to vX.Y.Z…** when a newer one exists — it downloads
-the new exe and restarts, **only when the user chooses it** (never automatic).
-
-Releasing is REST-based (`scripts/release.ps1`) because older `gh` mishandles this GHE instance's
-asset upload:
-
-```bash
-make release VERSION=v0.1.3      # bump src/VoiceInput <Version> to match first
-```
-
-This bakes the version into the exe, creates the release, and uploads `VoiceInput.exe`. In-app
-update check/download use the GHE REST API with the token from `gh auth`, so users need
-`gh auth login --hostname microsoft.ghe.com` once for in-app updates (downloading from the
-Releases page in a browser needs no setup).
-
-## Notes / limitations
-
-- **Windows on-device dictation** uses Windows' web-service-backed dictation grammar: it may need
-  the **Online speech recognition** privacy setting on (Settings → Privacy → Speech) and the
-  **zh-CN speech language pack** installed. If unavailable the app notifies and opens Speech
-  settings. For the most reliable zh-CN, use Azure Speech.
-- The overlay uses a custom translucent capsule (exact pill shape) rather than true OS
-  acrylic/Mica — in WPF, `AllowsTransparency` and DWM backdrops are mutually exclusive.
-- Clipboard restore preserves **plain text** only (images/files are not restored).
-- Tight intra-sentence Chinese+English code-switching is limited by the recognition engines; the
-  LLM refinement step helps correct the residue.
+- **Windows on-device dictation** is web-service-backed: it may need _Online speech recognition_ on
+  and the zh-CN speech pack installed. For reliable zh-CN, use Azure Speech.
+- Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
+  VS Code's editor (Monaco) — there it just falls back to plain refinement.
+- The overlay is a custom translucent capsule, not OS acrylic (WPF can't have both transparency and
+  a DWM backdrop).

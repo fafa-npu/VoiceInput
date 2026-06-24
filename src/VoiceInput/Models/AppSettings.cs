@@ -33,6 +33,9 @@ public sealed class AppSettings
     public string LlmApiKey { get; set; } = string.Empty;
     public string LlmModel { get; set; } = "gpt-4.1-mini";
 
+    /// <summary>Custom refine system prompt. Blank = use the built-in speech-aware default.</summary>
+    public string LlmPrompt { get; set; } = string.Empty;
+
     /// <summary>When true, the log records transcript / LLM text verbatim (for debugging).
     /// Off by default — dictated speech can contain passwords and other secrets.</summary>
     public bool DiagnosticLogging { get; set; }

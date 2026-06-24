@@ -55,26 +55,31 @@ if ($Uninstall) {
 
 $repoRoot = Split-Path (Split-Path $PSCommandPath -Parent) -Parent
 
-# Resolve the exe to install - build from source when no prebuilt -Source was given.
+# Resolve the exe: -Source if given; else build from a clone; else download the latest release.
 if (-not $Source) {
     $proj = Join-Path $repoRoot 'src\VoiceInput\VoiceInput.csproj'
-    if (-not (Test-Path $proj)) {
-        throw "No -Source exe given and project not found at $proj. Run from the repo, or pass -Source <exe>."
+    if (Test-Path $proj) {
+        if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+            throw 'Building from source needs the .NET 10 SDK (dotnet). Install it, or pass -Source <exe>.'
+        }
+        Write-Host 'Building self-contained release (this can take a minute)...' -ForegroundColor Cyan
+        $pubDir = Join-Path $repoRoot 'publish'
+        $pubArgs = @(
+            'publish', $proj, '-c', 'Release', '-r', 'win-x64',
+            '-p:SelfContained=true', '-p:PublishSingleFile=true',
+            '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true',
+            '-o', $pubDir
+        )
+        & dotnet @pubArgs | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+        $Source = Join-Path $pubDir $ExeName
     }
-    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-        throw 'No -Source exe given and the .NET SDK (dotnet) is not installed. Install the .NET 10 SDK, or pass -Source <exe>.'
+    else {
+        # Not run from a clone (e.g. the one-line web installer): download the latest release exe.
+        Write-Host 'Downloading the latest VoiceInput.exe...' -ForegroundColor Cyan
+        $Source = Join-Path $env:TEMP $ExeName
+        Invoke-WebRequest 'https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases/latest/download/VoiceInput.exe' -OutFile $Source
     }
-    Write-Host 'Building self-contained release (this can take a minute)...' -ForegroundColor Cyan
-    $pubDir = Join-Path $repoRoot 'publish'
-    $pubArgs = @(
-        'publish', $proj, '-c', 'Release', '-r', 'win-x64',
-        '-p:SelfContained=true', '-p:PublishSingleFile=true',
-        '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true',
-        '-o', $pubDir
-    )
-    & dotnet @pubArgs | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
-    $Source = Join-Path $pubDir $ExeName
 }
 
 if (-not (Test-Path $Source)) { throw "Installer source not found: $Source" }
