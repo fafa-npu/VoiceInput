@@ -16,30 +16,41 @@ public sealed class LlmRefiner
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     private const string SystemPrompt =
-        "You correct raw speech-to-text output for an input method. " +
+        "You correct raw output from a SPEECH-TO-TEXT voice input method. " +
+        "IMPORTANT: this text was SPOKEN, not typed — so the errors are almost always SOUND-BASED: " +
+        "Chinese homophones or near-homophones (同音或近音字), and English/technical terms misheard into " +
+        "similar-sounding words or Chinese phonetics (e.g. 配森 -> Python, 杰森 -> JSON, 瑞克特 -> React). " +
+        "When something looks wrong, reason about what the user most likely SAID by pronunciation, not by spelling.\n" +
         "The text may be Chinese, English, or a mix, and usually has no punctuation.\n" +
         "CRITICAL RULE - LANGUAGE IS PRESERVED: Never translate. The output MUST be in the exact same " +
         "language(s) as the input. English input stays English. Chinese input stays Chinese. A mix stays " +
         "the same mix. Translating between languages is a critical failure.\n" +
         "Do these:\n" +
-        "1. Fix obvious recognition errors: Chinese homophones; technical terms misheard into Chinese " +
-        "phonetics (配森 -> Python, 杰森 -> JSON, 瑞克特 -> React).\n" +
+        "1. Fix sound-based recognition errors: choose the homophone / near-homophone that fits the meaning " +
+        "and, when given, the CONTEXT.\n" +
         "2. Remove filler words and verbal hesitations: Chinese 嗯/呃/额/啊/哦/唉 and filler uses of " +
         "那个/这个/就是/然后; English um/uh/er/ah and filler uses of like / you know / I mean. " +
         "Remove them ONLY when they are fillers; keep them when they carry meaning " +
         "(e.g. 那个 meaning \"that\", \"like\" meaning \"similar to\").\n" +
         "3. Add natural punctuation and sentence breaks. Use full-width punctuation (，。？！、：) for " +
         "Chinese text and ASCII punctuation for English text; capitalize English sentence starts and the word \"I\".\n" +
+        "If a [CONTEXT] section is provided (the surrounding text in the user's current app or terminal), use it " +
+        "ONLY as reference to pick the right terminology, names, casing, and homophone — never include the context " +
+        "in your output.\n" +
         "Otherwise do NOT rewrite, rephrase, reorder, summarize, or change any wording; keep the meaning exactly.\n" +
-        "Output ONLY the corrected text, nothing else.";
+        "Output ONLY the corrected dictation text, nothing else.";
 
-    /// <summary>Refine <paramref name="text"/>; returns the original on any failure.</summary>
-    public async Task<string> RefineAsync(string text, AppSettings settings, CancellationToken ct = default)
+    /// <summary>Refine <paramref name="text"/>; returns the original on any failure.
+    /// When <paramref name="context"/> is provided it is passed as reference for better correction.</summary>
+    public async Task<string> RefineAsync(string text, AppSettings settings, string? context = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
         try
         {
-            string content = await CallAsync(settings, text, ct);
+            string userContent = string.IsNullOrWhiteSpace(context)
+                ? text
+                : $"[CONTEXT — surrounding text in the user's current app/terminal, reference only; do NOT output it]:\n{context}\n\n[DICTATION to correct]:\n{text}";
+            string content = await CallAsync(settings, userContent, ct);
             return string.IsNullOrWhiteSpace(content) ? text : content.Trim();
         }
         catch

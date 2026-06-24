@@ -37,6 +37,11 @@ public sealed class AppSettings
     /// Off by default — dictated speech can contain passwords and other secrets.</summary>
     public bool DiagnosticLogging { get; set; }
 
+    /// <summary>When true, read the focused control / terminal text via UI Automation and pass it
+    /// to the LLM as context for better correction. Off by default — it sends surrounding app
+    /// content (which may be sensitive) to the LLM.</summary>
+    public bool UseContext { get; set; }
+
     public AppSettings Clone() => (AppSettings)MemberwiseClone();
 
     /// <summary>The five recognition languages offered in the tray menu.</summary>

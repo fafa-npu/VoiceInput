@@ -24,6 +24,7 @@ public sealed class AppController : IDisposable
     private readonly AudioCapture _audio = new();
     private readonly TextInjector _injector = new();
     private readonly LlmRefiner _refiner = new();
+    private readonly ContextReader _contextReader = new();
     private readonly UpdateService _updater = new();
     private string? _availableUpdateTag;
     private string? _availableAssetUrl;
@@ -161,10 +162,11 @@ public sealed class AppController : IDisposable
             if (_settings.LlmEnabled && !string.IsNullOrWhiteSpace(_settings.LlmBaseUrl))
             {
                 _overlay!.SetStatus("Refining…");
-                string refined = await _refiner.RefineAsync(text, _settings);
+                string? context = _settings.UseContext ? await _contextReader.TryReadAsync() : null;
+                string refined = await _refiner.RefineAsync(text, _settings, context);
                 Log.Write(_settings.DiagnosticLogging
-                    ? $"LLM refine: \"{Trim(text)}\" -> \"{Trim(refined)}\""
-                    : $"LLM refine: {text.Length} -> {refined.Length} chars");
+                    ? $"LLM refine (ctx {context?.Length ?? 0}): \"{Trim(text)}\" -> \"{Trim(refined)}\""
+                    : $"LLM refine: {text.Length} -> {refined.Length} chars (ctx {context?.Length ?? 0})");
                 text = refined;
             }
 
@@ -429,6 +431,10 @@ public sealed class AppController : IDisposable
         var autostart = new WinForms.ToolStripMenuItem("Start at login") { Checked = IsAutoStartEnabled() };
         autostart.Click += (_, _) => { SetAutoStart(!IsAutoStartEnabled()); RebuildMenu(); };
         menu.Items.Add(autostart);
+
+        var ctx = new WinForms.ToolStripMenuItem("Use surrounding context (UIA)") { Checked = _settings.UseContext };
+        ctx.Click += (_, _) => { _settings.UseContext = !_settings.UseContext; Persist(); RebuildMenu(); };
+        menu.Items.Add(ctx);
 
         var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
         diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };

@@ -51,6 +51,7 @@ public sealed class SettingsStore
                 LlmModel = dto.LlmModel,
                 LlmApiKey = Unprotect(dto.LlmApiKeyEnc),
                 DiagnosticLogging = dto.DiagnosticLogging,
+                UseContext = dto.UseContext,
             };
         }
         catch
@@ -75,6 +76,7 @@ public sealed class SettingsStore
             LlmModel = s.LlmModel,
             LlmApiKeyEnc = Protect(s.LlmApiKey),
             DiagnosticLogging = s.DiagnosticLogging,
+            UseContext = s.UseContext,
         };
         File.WriteAllText(FilePath, JsonSerializer.Serialize(dto, JsonOptions));
     }
@@ -115,5 +117,6 @@ public sealed class SettingsStore
         public string LlmModel { get; set; } = "gpt-4.1-mini";
         public string LlmApiKeyEnc { get; set; } = string.Empty;
         public bool DiagnosticLogging { get; set; }
+        public bool UseContext { get; set; }
     }
 }
