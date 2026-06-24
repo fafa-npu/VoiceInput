@@ -17,20 +17,12 @@ public sealed class TextInjector
     {
         if (string.IsNullOrEmpty(text)) return;
 
-        IntPtr hwnd = GetForegroundWindow();
-
         // Preserve the user's clipboard text (v1 preserves plain text; images/files are not restored).
         string? previousText = TryGetClipboardText();
 
-        // Temporarily close the IME on the target window.
-        IntPtr himc = hwnd != IntPtr.Zero ? ImmGetContext(hwnd) : IntPtr.Zero;
-        bool imeWasOpen = false;
-        if (himc != IntPtr.Zero)
-        {
-            imeWasOpen = ImmGetOpenStatus(himc);
-            if (imeWasOpen) ImmSetOpenStatus(himc, false);
-        }
-
+        // NOTE: we deliberately do NOT touch the target window's IME. Ctrl+V is a system paste
+        // shortcut that CJK IMEs don't intercept, and toggling IME open-status via IMM32 could
+        // leave TSF/Electron apps (e.g. Microsoft 365 Copilot) stuck unable to accept input.
         try
         {
             SetClipboardText(text);
@@ -40,13 +32,6 @@ public sealed class TextInjector
         }
         finally
         {
-            if (himc != IntPtr.Zero)
-            {
-                if (imeWasOpen) ImmSetOpenStatus(himc, true);
-                ImmReleaseContext(hwnd, himc);
-            }
-
-            // Restore the previous clipboard.
             if (previousText is not null) SetClipboardText(previousText);
             else TryClearClipboard();
         }
