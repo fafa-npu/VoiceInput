@@ -1,53 +1,35 @@
 using System.Runtime.InteropServices;
-using System.Windows;
-using VoiceInput.Interop;
 using static VoiceInput.Interop.NativeMethods;
 
 namespace VoiceInput.Services;
 
 /// <summary>
-/// Injects text into the focused control using clipboard + simulated Ctrl+V.
-/// Before pasting it temporarily closes the foreground window's IME (so a CJK IME in native
-/// mode can't swallow Ctrl+V), then restores the IME state and the previous clipboard text.
-/// Must be called on the STA UI thread (clipboard access requires it).
+/// Injects text into the focused control by synthesizing the characters directly via
+/// SendInput + KEYEVENTF_UNICODE (each char becomes a VK_PACKET → WM_CHAR). This works in
+/// Chromium/Electron apps (Microsoft 365 Copilot, Teams) where simulated Ctrl+V can miss because
+/// they read the clipboard asynchronously, and it touches neither the clipboard nor the IME.
 /// </summary>
 public sealed class TextInjector
 {
-    public async Task InjectAsync(string text)
+    public Task InjectAsync(string text)
     {
-        if (string.IsNullOrEmpty(text)) return;
+        if (string.IsNullOrEmpty(text)) return Task.CompletedTask;
 
-        // Preserve the user's clipboard text (v1 preserves plain text; images/files are not restored).
-        string? previousText = TryGetClipboardText();
-
-        // NOTE: we deliberately do NOT touch the target window's IME. Ctrl+V is a system paste
-        // shortcut that CJK IMEs don't intercept, and toggling IME open-status via IMM32 could
-        // leave TSF/Electron apps (e.g. Microsoft 365 Copilot) stuck unable to accept input.
-        try
+        // Two INPUTs (down + up) per UTF-16 code unit. Surrogate pairs are sent as their two
+        // code units, which is exactly what KEYEVENTF_UNICODE expects.
+        var inputs = new INPUT[text.Length * 2];
+        int i = 0;
+        foreach (char c in text)
         {
-            SetClipboardText(text);
-            await Task.Delay(30);          // let the clipboard settle before pasting
-            SendCtrlV();
-            await Task.Delay(130);          // let the target app consume the paste before we restore
+            inputs[i++] = UnicodeKey(c, up: false);
+            inputs[i++] = UnicodeKey(c, up: true);
         }
-        finally
-        {
-            if (previousText is not null) SetClipboardText(previousText);
-            else TryClearClipboard();
-        }
-    }
 
-    private static void SendCtrlV()
-    {
-        var inputs = new INPUT[4];
-        inputs[0] = KeyScan(SCAN_LCONTROL, up: false);
-        inputs[1] = KeyScan(SCAN_V, up: false);
-        inputs[2] = KeyScan(SCAN_V, up: true);
-        inputs[3] = KeyScan(SCAN_LCONTROL, up: true);
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        return Task.CompletedTask;
     }
 
-    private static INPUT KeyScan(ushort scan, bool up) => new()
+    private static INPUT UnicodeKey(char c, bool up) => new()
     {
         type = INPUT_KEYBOARD,
         u = new InputUnion
@@ -55,35 +37,11 @@ public sealed class TextInjector
             ki = new KEYBDINPUT
             {
                 wVk = 0,
-                wScan = scan,
-                dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0),
+                wScan = c,
+                dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0),
                 time = 0,
-                dwExtraInfo = InjectionTag,   // so our own keyboard hook ignores this
+                dwExtraInfo = InjectionTag,   // so our own keyboard hook ignores these
             }
         }
     };
-
-    private static string? TryGetClipboardText()
-    {
-        for (int i = 0; i < 5; i++)
-        {
-            try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
-            catch { Thread.Sleep(40); }
-        }
-        return null;
-    }
-
-    private static void SetClipboardText(string text)
-    {
-        for (int i = 0; i < 5; i++)
-        {
-            try { Clipboard.SetText(text); return; }
-            catch { Thread.Sleep(40); }
-        }
-    }
-
-    private static void TryClearClipboard()
-    {
-        try { Clipboard.Clear(); } catch { }
-    }
 }

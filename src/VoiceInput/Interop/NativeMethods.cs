@@ -54,6 +54,7 @@ internal static class NativeMethods
     // ---- SendInput (Ctrl+V injection) ----
     public const uint INPUT_KEYBOARD = 1;
     public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint KEYEVENTF_UNICODE = 0x0004;
     public const uint KEYEVENTF_SCANCODE = 0x0008;
 
     // Sentinel stamped into injected events so our own hook ignores them.
