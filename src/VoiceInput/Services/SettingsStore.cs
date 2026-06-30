@@ -46,10 +46,20 @@ public sealed class SettingsStore
                 Engine = dto.Engine,
                 AzureRegion = dto.AzureRegion,
                 AzureKey = Unprotect(dto.AzureKeyEnc),
+                AzureAuthMode = dto.AzureAuthMode,
+                AzureEndpoint = dto.AzureEndpoint,
+                AzureTenantId = dto.AzureTenantId,
+                TranscribeEndpoint = dto.TranscribeEndpoint,
+                TranscribeModel = dto.TranscribeModel,
+                TranscribeAuthMode = dto.TranscribeAuthMode,
+                TranscribeApiKey = Unprotect(dto.TranscribeApiKeyEnc),
+                TranscribeTenantId = dto.TranscribeTenantId,
                 LlmEnabled = dto.LlmEnabled,
                 LlmBaseUrl = dto.LlmBaseUrl,
                 LlmModel = dto.LlmModel,
                 LlmPrompt = dto.LlmPrompt,
+                LlmLearnedRules = dto.LlmLearnedRules,
+                LearnFromEdits = dto.LearnFromEdits,
                 LlmApiKey = Unprotect(dto.LlmApiKeyEnc),
                 DiagnosticLogging = dto.DiagnosticLogging,
                 UseContext = dto.UseContext,
@@ -72,10 +82,20 @@ public sealed class SettingsStore
             Engine = s.Engine,
             AzureRegion = s.AzureRegion,
             AzureKeyEnc = Protect(s.AzureKey),
+            AzureAuthMode = s.AzureAuthMode,
+            AzureEndpoint = s.AzureEndpoint,
+            AzureTenantId = s.AzureTenantId,
+            TranscribeEndpoint = s.TranscribeEndpoint,
+            TranscribeModel = s.TranscribeModel,
+            TranscribeAuthMode = s.TranscribeAuthMode,
+            TranscribeApiKeyEnc = Protect(s.TranscribeApiKey),
+            TranscribeTenantId = s.TranscribeTenantId,
             LlmEnabled = s.LlmEnabled,
             LlmBaseUrl = s.LlmBaseUrl,
             LlmModel = s.LlmModel,
             LlmPrompt = s.LlmPrompt,
+            LlmLearnedRules = s.LlmLearnedRules,
+            LearnFromEdits = s.LearnFromEdits,
             LlmApiKeyEnc = Protect(s.LlmApiKey),
             DiagnosticLogging = s.DiagnosticLogging,
             UseContext = s.UseContext,
@@ -114,10 +134,20 @@ public sealed class SettingsStore
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
         public string AzureRegion { get; set; } = "eastasia";
         public string AzureKeyEnc { get; set; } = string.Empty;
+        public AzureAuthMode AzureAuthMode { get; set; } = AzureAuthMode.Key;
+        public string AzureEndpoint { get; set; } = string.Empty;
+        public string AzureTenantId { get; set; } = string.Empty;
+        public string TranscribeEndpoint { get; set; } = string.Empty;
+        public string TranscribeModel { get; set; } = "gpt-4o-transcribe";
+        public AzureAuthMode TranscribeAuthMode { get; set; } = AzureAuthMode.EntraId;
+        public string TranscribeApiKeyEnc { get; set; } = string.Empty;
+        public string TranscribeTenantId { get; set; } = string.Empty;
         public bool LlmEnabled { get; set; }
         public string LlmBaseUrl { get; set; } = "https://api.openai.com/v1";
         public string LlmModel { get; set; } = "gpt-4.1-mini";
         public string LlmPrompt { get; set; } = string.Empty;
+        public string LlmLearnedRules { get; set; } = string.Empty;
+        public bool LearnFromEdits { get; set; }
         public string LlmApiKeyEnc { get; set; } = string.Empty;
         public bool DiagnosticLogging { get; set; }
         public bool UseContext { get; set; }

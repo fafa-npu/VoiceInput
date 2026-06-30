@@ -50,7 +50,7 @@ public sealed class LlmRefiner
             string userContent = string.IsNullOrWhiteSpace(context)
                 ? text
                 : $"[CONTEXT — surrounding text in the user's current app/terminal, reference only; do NOT output it]:\n{context}\n\n[DICTATION to correct]:\n{text}";
-            string content = await CallAsync(settings, userContent, ct);
+            string content = await ChatAsync(settings, BuildPrompt(settings), userContent, ct);
             return string.IsNullOrWhiteSpace(content) ? text : content.Trim();
         }
         catch
@@ -64,7 +64,7 @@ public sealed class LlmRefiner
     {
         try
         {
-            string content = await CallAsync(settings, "测试 配森 和 杰森", ct);
+            string content = await ChatAsync(settings, BuildPrompt(settings), "测试 配森 和 杰森", ct);
             return (true, "OK — model replied: " + content.Trim());
         }
         catch (Exception ex)
@@ -73,18 +73,45 @@ public sealed class LlmRefiner
         }
     }
 
-    private static async Task<string> CallAsync(AppSettings settings, string userText, CancellationToken ct)
+    private const string LearnSystem =
+        "You analyze a voice input method's speech-recognition corrections. Each entry has RAW (raw " +
+        "recognizer output), REFINED (after the current correction rules), and FINAL (what the user kept " +
+        "after editing). Extract a SHORT list of concise, general rules that would make REFINED match FINAL " +
+        "on recurring mistakes (e.g. a term or name consistently misheard, its correct spelling/casing). " +
+        "Ignore one-off or unrelated edits and edits that merely add or remove content. " +
+        "Output ONLY the rules as short bullet lines (max 8), no preamble.";
+
+    /// <summary>Built-in (or custom) refine prompt plus any learned correction rules.</summary>
+    private static string BuildPrompt(AppSettings settings)
+    {
+        string b = string.IsNullOrWhiteSpace(settings.LlmPrompt) ? SystemPrompt : settings.LlmPrompt;
+        return string.IsNullOrWhiteSpace(settings.LlmLearnedRules)
+            ? b
+            : b + "\nLearned corrections (apply when relevant):\n" + settings.LlmLearnedRules;
+    }
+
+    /// <summary>Summarize captured (recognized → edited) pairs into correction rules. Throws on error.</summary>
+    public async Task<string> SummarizeCorrectionsAsync(
+        IEnumerable<(string Raw, string Refined, string Edited)> pairs, AppSettings settings, CancellationToken ct = default)
+    {
+        var sb = new StringBuilder();
+        foreach (var (raw, refined, edited) in pairs)
+            sb.Append("RAW: ").Append(raw).Append("\nREFINED: ").Append(refined)
+              .Append("\nFINAL: ").Append(edited).Append("\n---\n");
+        return (await ChatAsync(settings, LearnSystem, sb.ToString(), ct)).Trim();
+    }
+
+    private static async Task<string> ChatAsync(AppSettings settings, string systemContent, string userText, CancellationToken ct)
     {
         string url = settings.LlmBaseUrl.TrimEnd('/') + "/chat/completions";
 
-        string sys = string.IsNullOrWhiteSpace(settings.LlmPrompt) ? SystemPrompt : settings.LlmPrompt;
         var payload = new
         {
             model = settings.LlmModel,
             temperature = 0,
             messages = new object[]
             {
-                new { role = "system", content = sys },
+                new { role = "system", content = systemContent },
                 new { role = "user", content = userText },
             },
         };

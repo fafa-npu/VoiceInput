@@ -25,6 +25,7 @@ public sealed class AppController : IDisposable
     private readonly TextInjector _injector = new();
     private readonly LlmRefiner _refiner = new();
     private readonly ContextReader _contextReader = new();
+    private readonly CorrectionTracker _corrections = new();
     private readonly UpdateService _updater = new();
     private string? _availableUpdateTag;
     private string? _availableAssetUrl;
@@ -44,7 +45,6 @@ public sealed class AppController : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _finalsLock = new();   // guards _finals/_partial across engine + UI threads
     private const int StartTimeoutMs = 8000;
-    private const int EngineStopTimeoutMs = 2500;
 
     public AppController()
     {
@@ -55,6 +55,7 @@ public sealed class AppController : IDisposable
         _hook.Engaged += () => _ui.BeginInvoke(() => _ = StartDictationAsync());
         _hook.Released += () => _ui.BeginInvoke(() => _ = StopDictationAsync());
         _hook.Cancelled += () => _ui.BeginInvoke(() => _ = CancelDictationAsync());
+        _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader));
 
         _audio.LevelChanged += lvl => _level = lvl;
     }
@@ -68,6 +69,31 @@ public sealed class AppController : IDisposable
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
         _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
+        _ = PrewarmEntraAsync();                  // sign in once up front so dictation never triggers a focus-stealing popup
+    }
+
+    /// <summary>
+    /// If the selected engine uses Microsoft Entra auth, sign in at startup so the browser popup
+    /// happens now (not mid-dictation, where it would steal focus from the target window).
+    /// </summary>
+    private async Task PrewarmEntraAsync()
+    {
+        bool entra =
+            (_settings.Engine == SpeechEngineKind.GptTranscribe && _settings.TranscribeAuthMode == AzureAuthMode.EntraId && !string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint)) ||
+            (_settings.Engine == SpeechEngineKind.Azure && _settings.AzureAuthMode == AzureAuthMode.EntraId && !string.IsNullOrWhiteSpace(_settings.AzureEndpoint));
+        if (!entra) return;
+
+        string tenant = _settings.Engine == SpeechEngineKind.GptTranscribe ? _settings.TranscribeTenantId : _settings.AzureTenantId;
+        try
+        {
+            await EntraCredentialFactory.PrewarmAsync(tenant, EntraCredentialFactory.CognitiveServicesScope);
+            Log.Write("Entra sign-in ready.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Entra pre-warm", ex);
+            Notify("Azure sign-in needed", "Couldn't sign in to Azure for transcription. Open Settings to retry.");
+        }
     }
 
     // ---------------- Dictation flow ----------------
@@ -92,7 +118,7 @@ public sealed class AppController : IDisposable
 
                 _engine = CreateEngine(out bool azureFellBack);
                 if (azureFellBack)
-                    Notify("Azure key not set", "Falling back to Windows on-device recognition.");
+                    Notify("Speech engine not configured", "Falling back to Windows on-device recognition.");
 
                 Log.Write($"PTT engaged -> start dictation (engine={_engine.GetType().Name}, lang={_settings.Language}, azureFellBack={azureFellBack})");
 
@@ -145,6 +171,10 @@ public sealed class AppController : IDisposable
             if (!_dictating) return;
             _dictating = false;
 
+            // Batch engines (e.g. gpt-4o-transcribe) do the work on stop; show progress instead of "listening".
+            if (_engine is { HasInterimResults: false })
+                _overlay!.SetStatus("Transcribing…");
+
             await TeardownEngineAsync();
 
             string text = ComposeTranscript();
@@ -159,6 +189,7 @@ public sealed class AppController : IDisposable
                 return;
             }
 
+            string raw = text;   // raw STT, before LLM refine — recorded for correction learning
             if (_settings.LlmEnabled && !string.IsNullOrWhiteSpace(_settings.LlmBaseUrl))
             {
                 _overlay!.SetStatus("Refining…");
@@ -173,6 +204,7 @@ public sealed class AppController : IDisposable
             _overlay!.HideAnimated();
             await _injector.InjectAsync(text);
             Log.Write("Injected into focused control.");
+            if (_settings.LearnFromEdits) _corrections.Arm(raw, text);
         }
         finally
         {
@@ -217,7 +249,7 @@ public sealed class AppController : IDisposable
         _audio.Stop();
         if (_engine is not null)
         {
-            bool stopped = await TryAwait(_engine.StopAsync(), EngineStopTimeoutMs);
+            bool stopped = await TryAwait(_engine.StopAsync(), _engine.StopTimeoutMs);
             if (!stopped) Log.Write("WARN engine.StopAsync timed out; forcing dispose.");
         }
         DisposeEngine();
@@ -276,11 +308,41 @@ public sealed class AppController : IDisposable
     private ISpeechEngine CreateEngine(out bool azureFellBack)
     {
         azureFellBack = false;
-        if (_settings.Engine == SpeechEngineKind.Azure)
+        switch (_settings.Engine)
         {
-            if (!string.IsNullOrWhiteSpace(_settings.AzureKey) && !string.IsNullOrWhiteSpace(_settings.AzureRegion))
-                return new AzureSpeechEngine(_settings.AzureKey, _settings.AzureRegion);
-            azureFellBack = true;
+            case SpeechEngineKind.Azure:
+                if (_settings.AzureAuthMode == AzureAuthMode.EntraId)
+                {
+                    if (!string.IsNullOrWhiteSpace(_settings.AzureEndpoint))
+                        return AzureSpeechEngine.ForEntra(
+                            _settings.AzureEndpoint,
+                            EntraCredentialFactory.Create(_settings.AzureTenantId));
+                }
+                else if (!string.IsNullOrWhiteSpace(_settings.AzureKey) && !string.IsNullOrWhiteSpace(_settings.AzureRegion))
+                {
+                    return AzureSpeechEngine.ForKey(_settings.AzureKey, _settings.AzureRegion);
+                }
+                azureFellBack = true;
+                break;
+
+            case SpeechEngineKind.GptTranscribe:
+                if (!string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint) && !string.IsNullOrWhiteSpace(_settings.TranscribeModel))
+                {
+                    if (_settings.TranscribeAuthMode == AzureAuthMode.Key)
+                    {
+                        if (!string.IsNullOrWhiteSpace(_settings.TranscribeApiKey))
+                            return OpenAiTranscribeEngine.ForKey(_settings.TranscribeEndpoint, _settings.TranscribeModel, _settings.TranscribeApiKey);
+                    }
+                    else
+                    {
+                        return OpenAiTranscribeEngine.ForEntra(
+                            _settings.TranscribeEndpoint,
+                            _settings.TranscribeModel,
+                            EntraCredentialFactory.Create(_settings.TranscribeTenantId));
+                    }
+                }
+                azureFellBack = true;
+                break;
         }
         return new WindowsSpeechEngine();
     }
@@ -392,6 +454,8 @@ public sealed class AppController : IDisposable
             () => { _settings.Engine = SpeechEngineKind.Windows; Persist(); RebuildMenu(); });
         AddRadio(engine, "Azure Speech", _settings.Engine == SpeechEngineKind.Azure,
             () => { _settings.Engine = SpeechEngineKind.Azure; Persist(); RebuildMenu(); });
+        AddRadio(engine, "gpt-4o-transcribe (Foundry)", _settings.Engine == SpeechEngineKind.GptTranscribe,
+            () => { _settings.Engine = SpeechEngineKind.GptTranscribe; Persist(); RebuildMenu(); });
         menu.Items.Add(engine);
 
         // Push-to-talk key
@@ -435,6 +499,14 @@ public sealed class AppController : IDisposable
         var ctx = new WinForms.ToolStripMenuItem("Use surrounding context (UIA)") { Checked = _settings.UseContext };
         ctx.Click += (_, _) => { _settings.UseContext = !_settings.UseContext; Persist(); RebuildMenu(); };
         menu.Items.Add(ctx);
+
+        var learn = new WinForms.ToolStripMenuItem("Learn from my edits") { Checked = _settings.LearnFromEdits };
+        learn.Click += (_, _) => { _settings.LearnFromEdits = !_settings.LearnFromEdits; Persist(); RebuildMenu(); };
+        menu.Items.Add(learn);
+
+        var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
+        learnNow.Click += (_, _) => LearnFromCorrections();
+        menu.Items.Add(learnNow);
 
         var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
         diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };
@@ -535,6 +607,42 @@ public sealed class AppController : IDisposable
             if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches
             else Notify("Update failed",
                 $"Couldn't download {tag}. Check: gh auth login --hostname {UpdateService.GheHost}");
+        });
+    }
+
+    // ---------------- Learn from edits ----------------
+
+    private void LearnFromCorrections()
+    {
+        var pairs = _corrections.LoadPairs();
+        if (pairs.Count < 3)
+        {
+            Notify("Not enough edits yet", $"{pairs.Count} captured. Keep dictating + editing (needs ~3+, and 'Learn from my edits' on).");
+            return;
+        }
+        Notify("Learning…", $"Summarizing {pairs.Count} corrections.");
+        _ = LearnAsync(pairs);
+    }
+
+    private async Task LearnAsync(System.Collections.Generic.List<(string Raw, string Refined, string Edited)> pairs)
+    {
+        string rules;
+        try { rules = await _refiner.SummarizeCorrectionsAsync(pairs, _settings); }
+        catch (Exception ex) { _ = _ui.BeginInvoke(() => Notify("Learn failed", ex.Message)); return; }
+
+        _ = _ui.BeginInvoke(() =>
+        {
+            if (string.IsNullOrWhiteSpace(rules)) { Notify("Nothing learned", "No recurring patterns found."); return; }
+            var ans = MessageBox.Show(
+                $"Apply these learned correction rules to your refine prompt?\n\n{rules}",
+                "VoiceInput — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (ans == MessageBoxResult.Yes)
+            {
+                _settings.LlmLearnedRules = rules;
+                _store.Save(_settings);
+                _corrections.Clear();
+                Notify("Applied", "Learned rules added to your refine prompt.");
+            }
         });
     }
 

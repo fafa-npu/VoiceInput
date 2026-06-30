@@ -1,3 +1,4 @@
+using Azure.Core;
 using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
 
@@ -6,9 +7,23 @@ namespace VoiceInput.Services;
 /// <summary>
 /// Streaming recognition via the Azure Speech SDK. Consumes 16 kHz/16-bit/mono PCM fed from the
 /// app's WASAPI capture through a push stream (<see cref="NeedsAudioFeed"/> = true).
+/// Supports both account-key (local auth) and Microsoft Entra ID authentication.
 /// </summary>
-public sealed class AzureSpeechEngine(string subscriptionKey, string region) : ISpeechEngine
+public sealed class AzureSpeechEngine : ISpeechEngine
 {
+    private readonly Func<SpeechConfig> _configFactory;
+
+    private AzureSpeechEngine(Func<SpeechConfig> configFactory) => _configFactory = configFactory;
+
+    /// <summary>Account-key (local auth) engine.</summary>
+    public static AzureSpeechEngine ForKey(string subscriptionKey, string region) =>
+        new(() => SpeechConfig.FromSubscription(subscriptionKey, region));
+
+    /// <summary>Microsoft Entra ID engine. <paramref name="endpoint"/> is the resource's custom-domain
+    /// endpoint; the SDK acquires and auto-refreshes tokens via <paramref name="credential"/>.</summary>
+    public static AzureSpeechEngine ForEntra(string endpoint, TokenCredential credential) =>
+        new(() => SpeechConfig.FromEndpoint(new Uri(endpoint), credential));
+
     public bool NeedsAudioFeed => true;
     public event Action<string>? Partial;
     public event Action<string>? Final;
@@ -20,7 +35,7 @@ public sealed class AzureSpeechEngine(string subscriptionKey, string region) : I
 
     public async Task StartAsync(string language)
     {
-        var config = SpeechConfig.FromSubscription(subscriptionKey, region);
+        var config = _configFactory();
         config.SpeechRecognitionLanguage = language;
 
         _push = AudioInputStream.CreatePushStream(AudioStreamFormat.GetWaveFormatPCM(AudioCapture.TargetSampleRate, 16, 1));

@@ -7,6 +7,17 @@ public enum SpeechEngineKind
     Windows,
     /// <summary>Azure Speech SDK streaming recognition. Best zh-CN quality; requires a key + region.</summary>
     Azure,
+    /// <summary>Batch transcription via an Azure AI Foundry gpt-4o-transcribe deployment (Entra auth).</summary>
+    GptTranscribe,
+}
+
+/// <summary>How VoiceInput authenticates to the Azure Speech resource.</summary>
+public enum AzureAuthMode
+{
+    /// <summary>Account key (local auth). Simplest; fails if the resource has key auth disabled.</summary>
+    Key,
+    /// <summary>Microsoft Entra ID (AAD). Uses your signed-in identity; works when key auth is disabled.</summary>
+    EntraId,
 }
 
 /// <summary>
@@ -27,6 +38,32 @@ public sealed class AppSettings
     public string AzureKey { get; set; } = string.Empty;
     public string AzureRegion { get; set; } = "eastasia";
 
+    /// <summary>Key or Microsoft Entra ID auth for the Azure Speech resource. Default Key (back-compat).</summary>
+    public AzureAuthMode AzureAuthMode { get; set; } = AzureAuthMode.Key;
+
+    /// <summary>Custom-domain endpoint of the resource, e.g. https://my-resource.cognitiveservices.azure.com/.
+    /// Required for Entra ID auth.</summary>
+    public string AzureEndpoint { get; set; } = string.Empty;
+
+    /// <summary>Entra tenant that owns the Speech resource. Blank = the credential's default tenant.</summary>
+    public string AzureTenantId { get; set; } = string.Empty;
+
+    // --- gpt-4o-transcribe (Azure AI Foundry, batch, Entra-only) ---
+    /// <summary>Foundry resource custom-domain endpoint, e.g. https://my-resource.cognitiveservices.azure.com/.</summary>
+    public string TranscribeEndpoint { get; set; } = string.Empty;
+
+    /// <summary>Deployment name of the transcription model.</summary>
+    public string TranscribeModel { get; set; } = "gpt-4o-transcribe";
+
+    /// <summary>Key or Microsoft Entra ID auth for the Foundry transcription resource. Default Entra.</summary>
+    public AzureAuthMode TranscribeAuthMode { get; set; } = AzureAuthMode.EntraId;
+
+    /// <summary>Account key for the transcription resource (used when <see cref="TranscribeAuthMode"/> is Key).</summary>
+    public string TranscribeApiKey { get; set; } = string.Empty;
+
+    /// <summary>Entra tenant that owns the Foundry resource. Blank = the credential's default tenant.</summary>
+    public string TranscribeTenantId { get; set; } = string.Empty;
+
     // --- LLM refinement (OpenAI-compatible) ---
     public bool LlmEnabled { get; set; }
     public string LlmBaseUrl { get; set; } = "https://api.openai.com/v1";
@@ -35,6 +72,12 @@ public sealed class AppSettings
 
     /// <summary>Custom refine system prompt. Blank = use the built-in speech-aware default.</summary>
     public string LlmPrompt { get; set; } = string.Empty;
+
+    /// <summary>Correction rules learned from the user's edits, appended to the refine prompt.</summary>
+    public string LlmLearnedRules { get; set; } = string.Empty;
+
+    /// <summary>When true, capture (recognized → your edited) pairs on Enter for later learning.</summary>
+    public bool LearnFromEdits { get; set; }
 
     /// <summary>When true, the log records transcript / LLM text verbatim (for debugging).
     /// Off by default — dictated speech can contain passwords and other secrets.</summary>
@@ -55,5 +98,6 @@ public sealed class AppSettings
         ("zh-TW", "繁體中文"),
         ("ja-JP", "日本語"),
         ("ko-KR", "한국어"),
+        ("vi-VN", "Tiếng Việt"),
     };
 }

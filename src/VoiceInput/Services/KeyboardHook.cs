@@ -25,6 +25,8 @@ public sealed class KeyboardHook : IDisposable
     public event Action? Released;
     /// <summary>A chord was detected while PTT was held — abort dictation.</summary>
     public event Action? Cancelled;
+    /// <summary>Enter pressed — used as a "done editing" signal to capture corrections.</summary>
+    public event Action? Submitted;
 
     private readonly LowLevelKeyboardProc _proc;   // kept alive in a field so the GC can't collect it
     private IntPtr _hook = IntPtr.Zero;
@@ -73,6 +75,9 @@ public sealed class KeyboardHook : IDisposable
         bool isDown = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
         bool isUp = msg is WM_KEYUP or WM_SYSKEYUP;
         bool isPtt = (int)data.vkCode == _pttVk;
+
+        if (isDown && (int)data.vkCode == VK_RETURN)
+            Submitted?.Invoke();
 
         if (isDown)
         {

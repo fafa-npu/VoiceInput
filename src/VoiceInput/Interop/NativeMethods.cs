@@ -25,6 +25,7 @@ internal static class NativeMethods
     public const int VK_CAPITAL = 0x14; // Caps Lock
     public const int VK_CONTROL = 0x11;
     public const int VK_V = 0x56;
+    public const int VK_RETURN = 0x0D;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct KBDLLHOOKSTRUCT

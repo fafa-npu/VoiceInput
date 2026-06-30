@@ -22,32 +22,75 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="Speech Engine" FontWeight="Bold" Margin="0,0,0,6" />
-        <ComboBox x:Name="EngineCombo" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,8">
+        <ComboBox x:Name="EngineCombo" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,8"
+                  SelectionChanged="OnEngineChanged">
             <ComboBoxItem Content="Windows (on-device, offline)" />
-            <ComboBoxItem Content="Azure Speech (streaming, needs key)" />
+            <ComboBoxItem Content="Azure Speech (streaming)" />
+            <ComboBoxItem Content="gpt-4o-transcribe (Foundry, batch)" />
         </ComboBox>
 
-        <TextBlock Grid.Row="2" Grid.Column="0" Text="Azure Key" VerticalAlignment="Center" Margin="0,4,10,4" />
-        <TextBox x:Name="AzureKeyBox" Grid.Row="2" Grid.Column="1" Margin="0,4" />
-        <TextBlock Grid.Row="3" Grid.Column="0" Text="Azure Region" VerticalAlignment="Center" Margin="0,4,10,4" />
-        <TextBox x:Name="AzureRegionBox" Grid.Row="3" Grid.Column="1" Margin="0,4" />
+        <TextBlock x:Name="AzureAuthLabel" Grid.Row="2" Grid.Column="0" Text="Azure Auth" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <ComboBox x:Name="AzureAuthCombo" Grid.Row="2" Grid.Column="1" Margin="0,4"
+                  SelectionChanged="OnAzureAuthChanged">
+            <ComboBoxItem Content="Key (account key)" />
+            <ComboBoxItem Content="Microsoft Entra ID (sign-in)" />
+        </ComboBox>
 
-        <Separator Grid.Row="4" Grid.ColumnSpan="2" Margin="0,12" />
+        <TextBlock x:Name="AzureKeyLabel" Grid.Row="3" Grid.Column="0" Text="Azure Key" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureKeyBox" Grid.Row="3" Grid.Column="1" Margin="0,4" />
+        <TextBlock x:Name="AzureRegionLabel" Grid.Row="4" Grid.Column="0" Text="Azure Region" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureRegionBox" Grid.Row="4" Grid.Column="1" Margin="0,4" />
 
-        <CheckBox x:Name="LlmEnabledBox" Grid.Row="5" Grid.ColumnSpan="2"
+        <TextBlock x:Name="AzureEndpointLabel" Grid.Row="5" Grid.Column="0" Text="Endpoint" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureEndpointBox" Grid.Row="5" Grid.Column="1" Margin="0,4"
+                 ToolTip="Resource custom-domain endpoint, e.g. https://my-resource.cognitiveservices.azure.com/" />
+        <TextBlock x:Name="AzureTenantLabel" Grid.Row="6" Grid.Column="0" Text="Tenant ID" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="AzureTenantIdBox" Grid.Row="6" Grid.Column="1" Margin="0,4"
+                 ToolTip="Entra tenant (GUID) that owns the resource. Leave blank for your default tenant." />
+
+        <TextBlock x:Name="TranscribeAuthLabel" Grid.Row="7" Grid.Column="0" Text="Transcribe Auth" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <ComboBox x:Name="TranscribeAuthCombo" Grid.Row="7" Grid.Column="1" Margin="0,4"
+                  SelectionChanged="OnTranscribeAuthChanged">
+            <ComboBoxItem Content="Key (account key)" />
+            <ComboBoxItem Content="Microsoft Entra ID (sign-in)" />
+        </ComboBox>
+
+        <TextBlock x:Name="TranscribeEndpointLabel" Grid.Row="8" Grid.Column="0" Text="Foundry Endpoint" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="TranscribeEndpointBox" Grid.Row="8" Grid.Column="1" Margin="0,4"
+                 ToolTip="Foundry endpoint, e.g. https://my-resource.cognitiveservices.azure.com/" />
+        <TextBlock x:Name="TranscribeModelLabel" Grid.Row="9" Grid.Column="0" Text="Deployment" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="TranscribeModelBox" Grid.Row="9" Grid.Column="1" Margin="0,4"
+                 ToolTip="Transcription deployment name, e.g. gpt-4o-transcribe" />
+        <TextBlock x:Name="TranscribeApiKeyLabel" Grid.Row="10" Grid.Column="0" Text="API Key" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="TranscribeApiKeyBox" Grid.Row="10" Grid.Column="1" Margin="0,4" />
+        <TextBlock x:Name="TranscribeTenantLabel" Grid.Row="11" Grid.Column="0" Text="Tenant ID" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="TranscribeTenantIdBox" Grid.Row="11" Grid.Column="1" Margin="0,4"
+                 ToolTip="Entra tenant (GUID) that owns the Foundry resource. Leave blank for your default tenant." />
+
+        <Separator Grid.Row="12" Grid.ColumnSpan="2" Margin="0,12" />
+
+        <CheckBox x:Name="LlmEnabledBox" Grid.Row="13" Grid.ColumnSpan="2"
                   Content="Enable LLM refinement" FontWeight="Bold" Margin="0,0,0,8" />
 
-        <TextBlock Grid.Row="6" Grid.Column="0" Text="API Base URL" VerticalAlignment="Center" Margin="0,4,10,4" />
-        <TextBox x:Name="LlmBaseUrlBox" Grid.Row="6" Grid.Column="1" Margin="0,4" />
-        <TextBlock Grid.Row="7" Grid.Column="0" Text="API Key" VerticalAlignment="Center" Margin="0,4,10,4" />
-        <TextBox x:Name="LlmApiKeyBox" Grid.Row="7" Grid.Column="1" Margin="0,4" />
-        <TextBlock Grid.Row="8" Grid.Column="0" Text="Model" VerticalAlignment="Center" Margin="0,4,10,4" />
-        <TextBox x:Name="LlmModelBox" Grid.Row="8" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="14" Grid.Column="0" Text="API Base URL" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmBaseUrlBox" Grid.Row="14" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="15" Grid.Column="0" Text="API Key" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmApiKeyBox" Grid.Row="15" Grid.Column="1" Margin="0,4" />
+        <TextBlock Grid.Row="16" Grid.Column="0" Text="Model" VerticalAlignment="Center" Margin="0,4,10,4" />
+        <TextBox x:Name="LlmModelBox" Grid.Row="16" Grid.Column="1" Margin="0,4" />
 
-        <DockPanel Grid.Row="9" Grid.ColumnSpan="2" Margin="0,16,0,0" LastChildFill="False">
+        <DockPanel Grid.Row="17" Grid.ColumnSpan="2" Margin="0,16,0,0" LastChildFill="False">
             <TextBlock x:Name="StatusText" DockPanel.Dock="Left" VerticalAlignment="Center"
                        Foreground="#555" TextWrapping="Wrap" MaxWidth="220" />
             <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save" Width="80" Margin="8,0,0,0" Click="OnSave" />

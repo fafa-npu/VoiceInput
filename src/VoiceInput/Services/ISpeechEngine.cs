@@ -6,6 +6,14 @@ public interface ISpeechEngine : IDisposable
     /// <summary>True if the engine consumes PCM via <see cref="Feed"/> (Azure). False if it opens its own mic (Windows).</summary>
     bool NeedsAudioFeed { get; }
 
+    /// <summary>Upper bound the controller allows <see cref="StopAsync"/> to run before force-disposing.
+    /// Streaming engines stop fast; a batch engine that transcribes on stop overrides this higher.</summary>
+    int StopTimeoutMs => 2500;
+
+    /// <summary>True if the engine streams interim hypotheses while you talk. False for batch engines
+    /// (e.g. gpt-4o-transcribe) that only produce text after <see cref="StopAsync"/>.</summary>
+    bool HasInterimResults => true;
+
     /// <summary>Interim hypothesis for the current segment.</summary>
     event Action<string>? Partial;
 

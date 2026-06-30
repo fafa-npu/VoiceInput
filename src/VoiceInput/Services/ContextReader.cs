@@ -29,6 +29,56 @@ public sealed class ContextReader
         }
     }
 
+    /// <summary>Read ONLY the focused input box's value (for capturing what the user edited).
+    /// Skips documents/editors/terminals — unlike <see cref="TryReadAsync"/> it does not fall back to
+    /// a window's text buffer, so it won't return a whole editor/terminal as if it were an input.</summary>
+    public async Task<string?> TryReadFocusedValueAsync()
+    {
+        try
+        {
+            var task = Task.Run(ReadFocusedValue);
+            var done = await Task.WhenAny(task, Task.Delay(TimeoutMs));
+            return done == task ? await task : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadFocusedValue()
+    {
+        AutomationElement? e;
+        try { e = AutomationElement.FocusedElement; } catch { return null; }
+        if (e is null) return null;
+
+        try
+        {
+            if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
+            {
+                var v = ((ValuePattern)vp).Current.Value?.Trim();
+                if (!string.IsNullOrWhiteSpace(v) && !IsUnreadable(v)) return v;
+            }
+        }
+        catch { }
+        try
+        {
+            // TextPattern only if it's small enough to be an input — a document/editor/terminal
+            // returns the whole buffer, which is not "what the user edited". ponytail: 600 chars / 6 lines.
+            if (e.TryGetCurrentPattern(TextPattern.Pattern, out var tp))
+            {
+                var t = ((TextPattern)tp).DocumentRange.GetText(800)?.Trim();
+                if (!string.IsNullOrWhiteSpace(t) && !IsUnreadable(t) && t.Length < 600 && t.Count(c => c == '\n') < 6)
+                    return t;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static bool IsUnreadable(string t) =>
+        t.Contains("not accessible at this time", StringComparison.OrdinalIgnoreCase);
+
     private static string? ReadInternal()
     {
         string? text = null;
@@ -50,6 +100,9 @@ public sealed class ContextReader
 
         if (string.IsNullOrWhiteSpace(text)) return null;
         text = text.Trim();
+        // VS Code / some Electron apps expose this placeholder when the editor isn't UIA-readable —
+        // it's not real content, so treat it as "couldn't read" (fall back to no context).
+        if (text.Contains("not accessible at this time", StringComparison.OrdinalIgnoreCase)) return null;
         return text.Length > MaxChars ? text[^MaxChars..] : text;   // keep the most recent tail
     }
 
