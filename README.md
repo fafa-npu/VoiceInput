@@ -30,9 +30,14 @@ layer** on top:
   missed key-up (UAC / lock screen).
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
-- **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어.
-- **Streaming recognition** via the **Azure Speech SDK** (best zh-CN), with **Windows on-device
-  dictation** as the no-key fallback.
+- **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
+- **Three speech engines:** **Windows on-device** (no key, offline), **Azure Speech** (streaming,
+  low-latency zh-CN), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch — highest accuracy,
+  transcribes on release). Azure Speech and gpt-4o-transcribe each support **account-key** or
+  **Microsoft Entra ID** auth (interactive sign-in, cached so you sign in once).
+- **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
+  minute between dictations, so back-to-back dictation is instant and the first words aren't lost to
+  device cold-start. The mic is fully released when idle or paused.
 - **Capsule overlay** at the bottom of the active monitor (multi-monitor aware) with a live,
   RMS-driven waveform and the running transcript; grows smoothly and shows the latest words.
 - **Reliable injection** by typing the characters directly (SendInput Unicode), so it lands in
@@ -68,9 +73,12 @@ Uninstall: `scripts\install.ps1 -Uninstall`.
 
 ## Configuration
 
-Tray → **Settings…** for engine + Azure key/region + LLM (Base URL / Key / Model, default
-`gpt-4.1-mini`). To customize the refine prompt, set `LlmPrompt` in
-`%APPDATA%\VoiceInput\settings.json` (secret fields are DPAPI-encrypted per-user).
+Tray → **Settings…** for engine + auth and LLM. Each cloud engine offers **Key** or **Microsoft
+Entra ID** auth: Azure Speech needs key+region (Key) or endpoint+tenant (Entra); gpt-4o-transcribe
+needs the Foundry endpoint + deployment, with an API key (Key) or tenant (Entra). LLM refinement
+takes any OpenAI-compatible Base URL / Key / Model (default `gpt-4.1-mini`). To customize the refine
+prompt, set `LlmPrompt` in `%APPDATA%\VoiceInput\settings.json` (secret fields are DPAPI-encrypted
+per-user).
 
 ## Build (developers)
 
@@ -89,6 +97,9 @@ The app shows its version in the tray and offers **Update to vX.Y.Z…** when a 
 
 - **Windows on-device dictation** is web-service-backed: it may need _Online speech recognition_ on
   and the zh-CN speech pack installed. For reliable zh-CN, use Azure Speech.
+- **gpt-4o-transcribe** is batch: it transcribes after you release (~0.5–2 s), so there are no live
+  partials — but accuracy is highest (zh-CN homophones, tech terms). Needs an Azure AI Foundry
+  resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
 - The overlay is a custom translucent capsule, not OS acrylic (WPF can't have both transparency and

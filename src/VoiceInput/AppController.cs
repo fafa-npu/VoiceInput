@@ -45,6 +45,7 @@ public sealed class AppController : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _finalsLock = new();   // guards _finals/_partial across engine + UI threads
     private const int StartTimeoutMs = 8000;
+    private const int FirstFrameTimeoutMs = 3000;   // max wait for a cold mic to start delivering audio
 
     public AppController()
     {
@@ -113,8 +114,7 @@ public sealed class AppController : IDisposable
             {
                 // Fragile setup is inside the try so any failure (e.g. no microphone) routes through
                 // AbortInternalAsync and resets _dictating, instead of permanently wedging the app.
-                _overlay!.ShowListening(Placeholder());
-                _audio.Start();
+                _overlay!.ShowListening(Preparing());
 
                 _engine = CreateEngine(out bool azureFellBack);
                 if (azureFellBack)
@@ -124,15 +124,23 @@ public sealed class AppController : IDisposable
 
                 _engine.Partial += OnPartial;
                 _engine.Final += OnFinal;
-                if (_engine.NeedsAudioFeed)
-                    _audio.PcmChunkAvailable += OnPcm;
 
+                // Start the engine first so the audio feed never arrives before it's ready.
                 // Bound StartAsync so a hung SDK call can't hold the gate forever (real errors still propagate).
                 var startTask = _engine.StartAsync(_settings.Language);
                 if (await Task.WhenAny(startTask, Task.Delay(StartTimeoutMs)) != startTask)
                     throw new TimeoutException("Speech engine start timed out.");
                 await startTask;
-                Log.Write("Engine started OK, listening…");
+
+                if (_engine.NeedsAudioFeed)
+                    _audio.PcmChunkAvailable += OnPcm;
+
+                // Open (or reuse a warm) mic, then only cue the user to speak once it's actually
+                // delivering audio — so a cold-start device doesn't clip the first words.
+                _audio.BeginSession();
+                bool live = await Task.WhenAny(_audio.FirstFrame, Task.Delay(FirstFrameTimeoutMs)) == _audio.FirstFrame;
+                _overlay!.SetText(Placeholder());
+                Log.Write(live ? "Engine started, mic live — listening…" : "Engine started, mic warm-up timed out — listening anyway…");
             }
             catch (SpeechLanguageUnavailableException ex)
             {
@@ -246,7 +254,7 @@ public sealed class AppController : IDisposable
     {
         // Unsubscribe the PCM feed before stopping audio so no in-flight callback can Feed a closing engine.
         if (_engine is not null && _engine.NeedsAudioFeed) _audio.PcmChunkAvailable -= OnPcm;
-        _audio.Stop();
+        _audio.EndSession();
         if (_engine is not null)
         {
             bool stopped = await TryAwait(_engine.StopAsync(), _engine.StopTimeoutMs);
@@ -358,6 +366,8 @@ public sealed class AppController : IDisposable
 
     private string Placeholder() => _settings.Language.StartsWith("zh") ? "聆听中…" : "Listening…";
 
+    private string Preparing() => _settings.Language.StartsWith("zh") ? "准备中…" : "Starting…";
+
     // ---------------- Tray ----------------
 
     private void BuildTray()
@@ -379,6 +389,7 @@ public sealed class AppController : IDisposable
     private void TogglePause()
     {
         _paused = !_paused;
+        if (_paused) _audio.Release();   // drop any warm mic so paused == mic fully off
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
             _paused ? "VoiceInput won't respond to the push-to-talk key until resumed."
