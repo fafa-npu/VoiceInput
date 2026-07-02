@@ -142,6 +142,7 @@ public sealed class KeyboardHook : IDisposable
     private static int ResolveVk(string key) => key switch
     {
         "RightCtrl" => VK_RCONTROL,
+        "LeftCtrl" => VK_LCONTROL,
         "RightAlt" => VK_RMENU,
         "RightShift" => VK_RSHIFT,
         "CapsLock" => VK_CAPITAL,

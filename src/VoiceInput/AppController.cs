@@ -40,6 +40,7 @@ public sealed class AppController : IDisposable
     private volatile float _level;
     private bool _dictating;
     private volatile bool _paused;   // when true, the PTT key is ignored (listening paused, app stays up)
+    private float _sessionPeak;      // loudest mic level seen this dictation (0 ⇒ no audio captured)
     // Serializes the start/stop/cancel lifecycle so sessions can never overlap
     // (Windows dictation forbids overlapping audio-engine sessions).
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -58,7 +59,7 @@ public sealed class AppController : IDisposable
         _hook.Cancelled += () => _ui.BeginInvoke(() => _ = CancelDictationAsync());
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader));
 
-        _audio.LevelChanged += lvl => _level = lvl;
+        _audio.LevelChanged += lvl => { _level = lvl; if (lvl > _sessionPeak) _sessionPeak = lvl; };
     }
 
     public void Start()
@@ -109,6 +110,7 @@ public sealed class AppController : IDisposable
             _dictating = true;
             ClearTranscript();
             _level = 0;
+            _sessionPeak = 0f;
 
             try
             {
@@ -192,7 +194,10 @@ public sealed class AppController : IDisposable
 
             if (string.IsNullOrWhiteSpace(text))
             {
-                Log.Write("Empty transcript — nothing recognized. Check mic input / language pack.");
+                Log.Write($"Empty transcript — nothing recognized (peak level {_sessionPeak:F3}).");
+                if (_sessionPeak < 0.02f)
+                    Notify("No microphone audio",
+                        "VoiceInput didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
                 _overlay!.HideAnimated();
                 return;
             }
@@ -430,6 +435,7 @@ public sealed class AppController : IDisposable
     private static string PttDisplay(string key) => key switch
     {
         "RightCtrl" => "Right Ctrl",
+        "LeftCtrl" => "Left Ctrl",
         "CapsLock" => "Caps Lock",
         "RightAlt" => "Right Alt",
         "RightShift" => "Right Shift",
@@ -471,7 +477,7 @@ public sealed class AppController : IDisposable
 
         // Push-to-talk key
         var ptt = new WinForms.ToolStripMenuItem("Push-to-talk key");
-        foreach (var key in new[] { "RightCtrl", "CapsLock", "RightAlt", "RightShift" })
+        foreach (var key in new[] { "RightCtrl", "LeftCtrl", "CapsLock", "RightAlt", "RightShift" })
         {
             string k = key;
             AddRadio(ptt, PttDisplay(k), _settings.PttKey == k, () =>
