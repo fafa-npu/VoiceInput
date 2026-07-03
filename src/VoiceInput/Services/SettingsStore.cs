@@ -18,6 +18,9 @@ public sealed class SettingsStore
 
     private static readonly string FilePath = Path.Combine(Dir, "settings.json");
 
+    /// <summary>False on a fresh machine (no settings saved yet) — used to drive first-run onboarding.</summary>
+    public bool Exists => File.Exists(FilePath);
+
     // App-specific entropy mixed into DPAPI so another process running as the same
     // user can't trivially unprotect the blob without also knowing this value.
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("VoiceInput.v1.dpapi.entropy");

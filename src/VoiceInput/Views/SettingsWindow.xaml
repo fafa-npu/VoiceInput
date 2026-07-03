@@ -6,7 +6,22 @@
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         ShowInTaskbar="True">
-    <Grid Margin="20">
+    <DockPanel Margin="20">
+        <Border DockPanel.Dock="Top" Background="#EEF3FB" BorderBrush="#C7D8F0" BorderThickness="1"
+                CornerRadius="6" Padding="12,9" Margin="0,0,0,14">
+            <TextBlock TextWrapping="Wrap" Foreground="#1F3A5F">
+                <Run FontWeight="Bold">Quick start.</Run>
+                <Run>VoiceInput runs in the system tray (blue mic, bottom-right) — there is no main window.</Run>
+                <Run>Hold your push-to-talk key to talk, release to type.</Run>
+                <LineBreak /><LineBreak />
+                <Run FontWeight="Bold">Best accuracy:</Run>
+                <Run>pick engine</Run>
+                <Run FontWeight="Bold">gpt-4o-transcribe (Foundry)</Run>
+                <Run>below and fill in the Foundry Endpoint + Deployment.</Run>
+                <Run>"LLM refinement" and its "Test" button are optional — leave them off to start.</Run>
+            </TextBlock>
+        </Border>
+        <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
@@ -94,7 +109,9 @@
             <TextBlock x:Name="StatusText" DockPanel.Dock="Left" VerticalAlignment="Center"
                        Foreground="#555" TextWrapping="Wrap" MaxWidth="220" />
             <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Save" Width="80" Margin="8,0,0,0" Click="OnSave" />
-            <Button x:Name="TestButton" DockPanel.Dock="Right" Content="Test" Width="80" Click="OnTest" />
+            <Button x:Name="TestButton" DockPanel.Dock="Right" Content="Test" Width="80" Click="OnTest"
+                    ToolTip="Tests the optional LLM refinement endpoint only — not the speech engine. Leave LLM refinement off if you just want dictation." />
         </DockPanel>
-    </Grid>
+        </Grid>
+    </DockPanel>
 </Window>

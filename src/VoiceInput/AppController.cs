@@ -64,14 +64,36 @@ public sealed class AppController : IDisposable
 
     public void Start()
     {
+        bool firstRun = !_store.Exists;   // capture before anything writes the settings file
+
         _overlay = new OverlayWindow { LevelSource = () => _level };
         BuildTray();
         _hook.Install();
         Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
+        if (firstRun) ShowFirstRunOnboarding();
+
         _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
         _ = PrewarmEntraAsync();                  // sign in once up front so dictation never triggers a focus-stealing popup
+    }
+
+    /// <summary>
+    /// First launch on a machine: the app is tray-only, so a new user sees "nothing happen" after
+    /// double-clicking the exe. Make it obvious it's running, explain the push-to-talk key, and open
+    /// Settings so they can pick a speech engine right away. Persist defaults so this shows only once.
+    /// </summary>
+    private void ShowFirstRunOnboarding()
+    {
+        Log.Write("First run — showing onboarding.");
+        Persist();   // write settings.json now so onboarding doesn't reappear on every launch
+
+        Notify("VoiceInput is running",
+            $"It lives in the system tray (blue mic, bottom-right) — there's no main window. " +
+            $"Hold {PttDisplay(_settings.PttKey)} to talk, release to type. Opening Settings so you can pick a speech engine…");
+
+        // Give the tray balloon a moment to appear before the window steals attention.
+        _ui.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(OpenSettings));
     }
 
     /// <summary>
