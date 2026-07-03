@@ -3,9 +3,9 @@
   Build a versioned self-contained exe and publish it as a GitHub Enterprise release.
 
 .DESCRIPTION
-  Older `gh` builds mishandle this GHE instance's release asset upload, so this script creates the
+  Older `gh` builds mishandle release asset upload on some hosts, so this script creates the
   release and uploads the exe via the REST API directly (using the token from `gh auth`).
-  Prerequisite: gh auth login --hostname microsoft.ghe.com
+  Prerequisite: gh auth login --hostname github.com
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version v0.1.1
@@ -14,10 +14,10 @@
 param([Parameter(Mandatory = $true)][string]$Version)   # e.g. v0.1.1
 
 $ErrorActionPreference = 'Stop'
-$Repo    = 'Zhao-Hua/VoiceInput'
-$GheHost = 'microsoft.ghe.com'
-$Api     = "https://$GheHost/api/v3"
-$Uploads = "https://uploads.$GheHost"
+$Repo    = 'fafa-npu/VoiceInput'
+$Site    = 'github.com'
+$Api     = 'https://api.github.com'
+$Uploads = 'https://uploads.github.com'
 
 $repoRoot = Split-Path (Split-Path $PSCommandPath -Parent) -Parent
 $proj   = Join-Path $repoRoot 'src\VoiceInput\VoiceInput.csproj'
@@ -25,8 +25,8 @@ $pubDir = Join-Path $repoRoot 'publish'
 $exe    = Join-Path $pubDir 'VoiceInput.exe'
 $num    = $Version.TrimStart('v', 'V')
 
-$token = gh auth token --hostname $GheHost
-if (-not $token) { throw "No GHE token. Run once: gh auth login --hostname $GheHost" }
+$token = gh auth token --hostname $Site
+if (-not $token) { throw "No token. Run once: gh auth login --hostname $Site" }
 $H = @{ Authorization = "token $token"; Accept = 'application/vnd.github+json' }
 
 # Build the self-contained single-file exe with the release version baked in.
@@ -74,4 +74,4 @@ catch {
 
 Write-Host "Released $Version" -ForegroundColor Green
 Write-Host "  Page:     $($rel.html_url)"
-Write-Host "  Download: https://$GheHost/$Repo/releases/download/$Version/VoiceInput.exe"
+Write-Host "  Download: https://$Site/$Repo/releases/download/$Version/VoiceInput.exe"

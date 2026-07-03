@@ -78,7 +78,7 @@ if (-not $Source) {
         # Not run from a clone (e.g. the one-line web installer): download the latest release exe.
         Write-Host 'Downloading the latest VoiceInput.exe...' -ForegroundColor Cyan
         $Source = Join-Path $env:TEMP $ExeName
-        Invoke-WebRequest 'https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases/latest/download/VoiceInput.exe' -OutFile $Source
+        Invoke-WebRequest 'https://github.com/fafa-npu/VoiceInput/releases/latest/download/VoiceInput.exe' -OutFile $Source
     }
 }
 

@@ -62,11 +62,11 @@ layer** on top:
 Menu + auto-start, and launches) — in PowerShell:
 
 ```powershell
-$s="$env:TEMP\vi.ps1"; iwr https://microsoft.ghe.com/Zhao-Hua/VoiceInput/raw/main/scripts/install.ps1 -OutFile $s; powershell -ExecutionPolicy Bypass -File $s
+$s="$env:TEMP\vi.ps1"; iwr https://github.com/fafa-npu/VoiceInput/raw/main/scripts/install.ps1 -OutFile $s; powershell -ExecutionPolicy Bypass -File $s
 ```
 
 Or just download `VoiceInput.exe` from the
-[Releases](https://microsoft.ghe.com/Zhao-Hua/VoiceInput/releases) page and double-click it
+[Releases](https://github.com/fafa-npu/VoiceInput/releases) page and double-click it
 (it's self-contained — no .NET runtime needed).
 
 Uninstall: `scripts\install.ps1 -Uninstall`.
