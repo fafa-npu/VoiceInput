@@ -593,7 +593,7 @@ public sealed class AppController : IDisposable
                 case UpdateService.CheckOutcome.CheckFailed:
                     if (!silent)
                         Notify("Update check failed",
-                            $"Couldn't reach releases. Run once: gh auth login --hostname {UpdateService.GheHost}");
+                            $"Couldn't reach GitHub Releases for {UpdateService.Repo}. Check your connection and try again.");
                     break;
             }
         });
@@ -623,7 +623,7 @@ public sealed class AppController : IDisposable
         {
             if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches
             else Notify("Update failed",
-                $"Couldn't download {tag}. Check: gh auth login --hostname {UpdateService.GheHost}");
+                $"Couldn't download {tag}. Check your connection and try again.");
         });
     }
 

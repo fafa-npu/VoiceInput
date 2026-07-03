@@ -6,17 +6,16 @@ using System.Text.Json;
 namespace VoiceInput.Services;
 
 /// <summary>
-/// Manual, user-initiated update check against the GitHub Enterprise Releases for this repo.
-/// Talks to the GHE REST API directly (the bundled `gh` is only used to obtain a token, since
-/// older gh builds mishandle this instance's release asset endpoints). Never updates automatically.
-/// Prerequisite: `gh auth login --hostname &lt;GheHost&gt;` once, plus a published release with the exe asset.
+/// Manual, user-initiated update check against the public GitHub Releases for this repo.
+/// Works anonymously (public repo); if a `gh` login for github.com is present its token is used
+/// for a higher rate limit, but it is never required. Never updates automatically.
 /// </summary>
 public sealed class UpdateService
 {
-    public const string GheHost = "microsoft.ghe.com";
-    public const string Repo = "Zhao-Hua/VoiceInput";
+    public const string Host = "github.com";
+    public const string Repo = "fafa-npu/VoiceInput";
     private const string AssetName = "VoiceInput.exe";
-    private static readonly string ApiBase = $"https://{GheHost}/api/v3";
+    private static readonly string ApiBase = "https://api.github.com";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     public static Version CurrentVersion
@@ -34,8 +33,7 @@ public sealed class UpdateService
 
     public async Task<CheckResult> CheckAsync()
     {
-        string? token = await GetGheTokenAsync();
-        if (token is null) return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
+        string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
         try
         {
@@ -79,8 +77,7 @@ public sealed class UpdateService
     /// </summary>
     public async Task<bool> DownloadAndApplyAsync(string assetApiUrl)
     {
-        string? token = await GetGheTokenAsync();
-        if (token is null) return false;
+        string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
         try
         {
@@ -119,9 +116,10 @@ public sealed class UpdateService
         }
     }
 
-    private static void AddHeaders(HttpRequestMessage req, string token, string accept)
+    private static void AddHeaders(HttpRequestMessage req, string? token, string accept)
     {
-        req.Headers.TryAddWithoutValidation("Authorization", $"token {token}");
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
         req.Headers.TryAddWithoutValidation("Accept", accept);
         req.Headers.TryAddWithoutValidation("User-Agent", "VoiceInput-Updater");
     }
@@ -133,12 +131,13 @@ public sealed class UpdateService
         return Version.TryParse(t, out var v) ? new Version(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build) : null;
     }
 
-    /// <summary>Reuses the user's existing GHE login via `gh auth token`; returns null if unavailable.</summary>
-    private static async Task<string?> GetGheTokenAsync()
+    /// <summary>Reuses an existing github.com `gh` login for a higher rate limit; null if unavailable
+    /// (the public Releases API works fine anonymously).</summary>
+    private static async Task<string?> GetGitHubTokenAsync()
     {
         try
         {
-            var psi = new ProcessStartInfo("gh", $"auth token --hostname {GheHost}")
+            var psi = new ProcessStartInfo("gh", $"auth token --hostname {Host}")
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
