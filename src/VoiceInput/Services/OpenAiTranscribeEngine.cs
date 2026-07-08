@@ -18,6 +18,8 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     private const string Scope = "https://cognitiveservices.azure.com/.default";
     // ponytail: bump if Foundry rejects gpt-4o-transcribe at this version.
     private const string ApiVersion = "2025-03-01-preview";
+    private const int AuthTimeoutSec = 8;    // token must be cached/silent; if expired we bail fast and re-auth off-lock
+    private const int HttpTimeoutSec = 20;   // upper bound on the transcription POST
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(25) };
 
     private readonly string _url;
@@ -26,6 +28,11 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     private readonly object _lock = new();
     private string _language = string.Empty;
     private volatile bool _closed;
+    private volatile bool _canceled;   // set on abort/chord-cancel: discard, skip the network call
+
+    /// <summary>Raised when acquiring the Entra token fails/times out (expired sign-in) so the app
+    /// can notify the user and re-authenticate in the background, off the dictation lock.</summary>
+    public event Action? AuthExpired;
 
     private OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
     {
@@ -56,9 +63,10 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     public bool HasInterimResults => false;
 
-    // Batch transcription runs inside StopAsync. Allow generous time for the FIRST interactive
-    // Entra sign-in (browser popup); after that the token is cached and acquisition is instant.
-    public int StopTimeoutMs => 120000;
+    // Batch transcription runs inside StopAsync while the dictation lock is held, so it must return
+    // promptly. Token acquisition and the HTTP POST are each hard-bounded below; this is the outer
+    // ceiling the controller enforces.
+    public int StopTimeoutMs => 30000;
 
 #pragma warning disable CS0067 // batch engine emits no interim hypotheses
     public event Action<string>? Partial;
@@ -68,10 +76,13 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     public Task StartAsync(string language)
     {
         _closed = false;
+        _canceled = false;
         _language = TwoLetter(language);
         lock (_lock) { _buffer.SetLength(0); }
         return Task.CompletedTask;
     }
+
+    public void Cancel() => _canceled = true;
 
     public void Feed(byte[] pcm16kMono)
     {
@@ -82,6 +93,8 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     public async Task StopAsync()
     {
         _closed = true;
+        if (_canceled) return;   // aborted / chord-cancelled: transcript is discarded, so skip the network call
+
         byte[] pcm;
         lock (_lock) { pcm = _buffer.ToArray(); }
         if (pcm.Length == 0) return;
@@ -98,9 +111,24 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
             if (!string.IsNullOrEmpty(_language)) form.Add(new StringContent(_language), "language");
 
             using var req = new HttpRequestMessage(HttpMethod.Post, _url) { Content = form };
-            await _applyAuth(req, CancellationToken.None);
 
-            using var resp = await Http.SendAsync(req, CancellationToken.None);
+            // Acquire the token with a hard timeout. A valid cached token is instant; if the sign-in
+            // has expired the credential would otherwise block on an interactive prompt — bound it so
+            // StopAsync (which holds the dictation lock) can never wedge, and hand re-auth to the app.
+            try
+            {
+                using var authCts = new CancellationTokenSource(TimeSpan.FromSeconds(AuthTimeoutSec));
+                await _applyAuth(req, authCts.Token);
+            }
+            catch (Exception authEx)
+            {
+                Log.Write($"OpenAiTranscribeEngine token acquisition failed ({authEx.GetType().Name}); requesting re-auth.");
+                AuthExpired?.Invoke();
+                return;
+            }
+
+            using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
+            using var resp = await Http.SendAsync(req, httpCts.Token);
             string json = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)
             {
@@ -112,6 +140,10 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
             string? text = doc.RootElement.TryGetProperty("text", out var t) ? t.GetString() : null;
             if (!string.IsNullOrWhiteSpace(text))
                 Final?.Invoke(text!.Trim());
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Write("OpenAiTranscribeEngine: transcription timed out.");
         }
         catch (Exception ex)
         {

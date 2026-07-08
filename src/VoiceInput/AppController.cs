@@ -148,6 +148,8 @@ public sealed class AppController : IDisposable
 
                 _engine.Partial += OnPartial;
                 _engine.Final += OnFinal;
+                if (_engine is OpenAiTranscribeEngine transcribe)
+                    transcribe.AuthExpired += OnTranscribeAuthExpired;
 
                 // Start the engine first so the audio feed never arrives before it's ready.
                 // Bound StartAsync so a hung SDK call can't hold the gate forever (real errors still propagate).
@@ -268,6 +270,7 @@ public sealed class AppController : IDisposable
     private async Task AbortInternalAsync()
     {
         _dictating = false;
+        _engine?.Cancel();   // discard: skip any network transcription for an aborted/cancelled session
         await TeardownEngineAsync();
         ClearTranscript();
         _overlay?.HideAnimated();
@@ -387,8 +390,32 @@ public sealed class AppController : IDisposable
         if (_engine is null) return;
         _engine.Partial -= OnPartial;
         _engine.Final -= OnFinal;
+        if (_engine is OpenAiTranscribeEngine transcribe)
+            transcribe.AuthExpired -= OnTranscribeAuthExpired;
         _engine.Dispose();
         _engine = null;
+    }
+
+    private volatile bool _reauthInFlight;
+
+    /// <summary>The transcribe engine couldn't get an Entra token (sign-in expired). Re-authenticate
+    /// in the background — off the dictation lock — so a browser popup never freezes dictation.</summary>
+    private void OnTranscribeAuthExpired()
+    {
+        if (_reauthInFlight) return;
+        _reauthInFlight = true;
+        _ui.BeginInvoke(() =>
+        {
+            Notify("Azure sign-in expired",
+                "Re-authenticating for transcription — a sign-in window may appear. Then just talk again.");
+            _ = ReauthAsync();
+        });
+    }
+
+    private async Task ReauthAsync()
+    {
+        try { await PrewarmEntraAsync(); }
+        finally { _reauthInFlight = false; }
     }
 
     private string Placeholder() => _settings.Language.StartsWith("zh") ? "聆听中…" : "Listening…";

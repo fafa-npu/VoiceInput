@@ -23,6 +23,11 @@ public interface ISpeechEngine : IDisposable
     Task StartAsync(string language);
     void Feed(byte[] pcm16kMono);
     Task StopAsync();
+
+    /// <summary>Abort the current session: discard buffered audio and do NOT finalize/transcribe.
+    /// Called on chord-cancel and error teardown so a discarded session never does pointless work
+    /// (e.g. a network transcription whose result is thrown away). Default: no-op.</summary>
+    void Cancel() { }
 }
 
 /// <summary>Thrown when the requested recognition language is not installed/available on the device.</summary>
