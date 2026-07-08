@@ -64,13 +64,22 @@ foreach ($a in @($rel.assets | Where-Object { $_.name -eq 'VoiceInput.exe' })) {
 }
 Write-Host "Uploading VoiceInput.exe..." -ForegroundColor Cyan
 $up = "$Uploads/repos/$Repo/releases/$($rel.id)/assets?name=VoiceInput.exe"
-try {
-    $r = Invoke-WebRequest -Uri $up -Method Post -Headers $H -ContentType 'application/octet-stream' -InFile $exe -TimeoutSec 600
-    if ($r.StatusCode -ne 201) { throw "HTTP $($r.StatusCode)" }
+# The upload succeeds (asset is created), but Invoke-WebRequest's response object is unreliable here
+# and reading $r.StatusCode can throw a spurious null-ref. So don't trust the call's return value —
+# verify success by querying the release's assets and confirming size + uploaded state.
+try { Invoke-WebRequest -Uri $up -Method Post -Headers $H -ContentType 'application/octet-stream' -InFile $exe -TimeoutSec 600 | Out-Null }
+catch { Write-Host "  (upload call returned an error; verifying via API…)" -ForegroundColor DarkYellow }
+
+$expected = (Get-Item $exe).Length
+$asset = $null
+foreach ($attempt in 1..5) {
+    Start-Sleep -Seconds 2
+    $check = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases/$($rel.id)" -Headers $H
+    $asset = $check.assets | Where-Object { $_.name -eq 'VoiceInput.exe' } | Select-Object -First 1
+    if ($asset -and $asset.state -eq 'uploaded' -and $asset.size -eq $expected) { break }
+    $asset = $null
 }
-catch {
-    throw "Asset upload failed: $($_.Exception.Message)"
-}
+if (-not $asset) { throw "Asset upload could not be verified (no uploaded VoiceInput.exe of $expected bytes on $Version)." }
 
 Write-Host "Released $Version" -ForegroundColor Green
 Write-Host "  Page:     $($rel.html_url)"
