@@ -6,7 +6,7 @@ CONFIG       := Release
 RID          := win-x64
 PUBLISH_DIR  := publish
 
-# Optional Authenticode signing. Provide a PFX + password to sign the published exe:
+# Optional Authenticode signing for local publish. Public releases require a PFX + password:
 #   make publish SIGN_PFX=mycert.pfx SIGN_PWD=secret
 # or a cert subject name from the user store:
 #   make publish SIGN_SUBJECT="My Company"
@@ -55,10 +55,11 @@ endif
 
 # One-click: build, copy to %LOCALAPPDATA%, enable auto-start, and launch.
 install: publish
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Source "$(PUBLISH_DIR)/VoiceInput.exe"
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 -Source "$(PUBLISH_DIR)/VoiceInput.exe" -AllowUnsignedDevelopmentBuild
 
 # Build a versioned self-contained exe and publish it as a GHE release (asset uploaded via REST,
 # since older gh mishandles this instance's upload endpoint). The version is baked into the exe so
 # the in-app update check compares correctly. One-time: gh auth login --hostname $(GHE_HOST).
 release:
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version $(VERSION)
+	@test -n "$(SIGN_PFX)" -a -n "$(SIGN_PWD)" || (echo "release requires SIGN_PFX and SIGN_PWD" && exit 1)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version $(VERSION) -SignPfx "$(SIGN_PFX)" -SignPassword "$(SIGN_PWD)"

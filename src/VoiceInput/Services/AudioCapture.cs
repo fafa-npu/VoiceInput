@@ -143,9 +143,18 @@ public sealed class AudioCapture : IDisposable
         if (!_sessionActive) return;          // warm but idle: keep the device alive, discard audio
 
         var fmt = capture.WaveFormat;
-        int channels = fmt.Channels;
-
-        float[] mono = ToMonoFloat(e.Buffer, e.BytesRecorded, fmt, channels, out int frames);
+        float[] mono;
+        int frames;
+        try
+        {
+            mono = AudioSampleConverter.DecodeMono(e.Buffer, e.BytesRecorded, fmt, ref _mono, out frames);
+        }
+        catch (NotSupportedException ex)
+        {
+            Log.Error("AudioCapture format", ex);
+            Release();
+            return;
+        }
         if (frames == 0) return;
 
         double sum = 0;
@@ -158,42 +167,6 @@ public sealed class AudioCapture : IDisposable
             byte[] pcm = ResampleTo16kPcm16(mono, frames, fmt.SampleRate);
             if (pcm.Length > 0) PcmChunkAvailable.Invoke(pcm);
         }
-    }
-
-    /// <summary>Decode to mono float into the reused <see cref="_mono"/> buffer (callbacks are serialized).</summary>
-    private float[] ToMonoFloat(byte[] buffer, int bytes, WaveFormat fmt, int channels, out int frames)
-    {
-        bool isFloat = fmt.Encoding == WaveFormatEncoding.IeeeFloat && fmt.BitsPerSample == 32;
-        int bytesPerSample = isFloat ? 4 : 2;
-        frames = bytes / (bytesPerSample * channels);
-        if (frames == 0) return _mono;
-        if (_mono.Length < frames) _mono = new float[frames];
-        var mono = _mono;
-
-        if (isFloat)
-        {
-            for (int f = 0; f < frames; f++)
-            {
-                float acc = 0;
-                for (int c = 0; c < channels; c++)
-                    acc += BitConverter.ToSingle(buffer, (f * channels + c) * 4);
-                mono[f] = acc / channels;
-            }
-        }
-        else
-        {
-            for (int f = 0; f < frames; f++)
-            {
-                int acc = 0;
-                for (int c = 0; c < channels; c++)
-                {
-                    int o = (f * channels + c) * 2;
-                    acc += (short)(buffer[o] | (buffer[o + 1] << 8));
-                }
-                mono[f] = acc / (channels * 32768f);
-            }
-        }
-        return mono;
     }
 
     /// <summary>Linear-interpolation downsample to 16 kHz int16, allocation-light (one output array).</summary>

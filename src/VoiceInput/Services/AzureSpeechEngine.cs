@@ -27,6 +27,7 @@ public sealed class AzureSpeechEngine : ISpeechEngine
     public bool NeedsAudioFeed => true;
     public event Action<string>? Partial;
     public event Action<string>? Final;
+    public event Action<SpeechFault>? Fault;
 
     private SpeechRecognizer? _recognizer;
     private PushAudioInputStream? _push;
@@ -56,11 +57,25 @@ public sealed class AzureSpeechEngine : ISpeechEngine
         _recognizer.Canceled += (_, e) =>
         {
             if (e.Reason == CancellationReason.Error)
+            {
                 Log.Write($"AzureSpeechEngine canceled: {e.ErrorCode} - {e.ErrorDetails}");
+                Fault?.Invoke(MapFault(e.ErrorCode, e.ErrorDetails));
+            }
         };
 
         await _recognizer.StartContinuousRecognitionAsync();
     }
+
+    private static SpeechFault MapFault(CancellationErrorCode code, string detail) => code switch
+    {
+        CancellationErrorCode.AuthenticationFailure => new(SpeechFaultKind.Authentication,
+            "Azure Speech authentication failed. Check the selected account, key, and resource settings.", detail),
+        CancellationErrorCode.TooManyRequests => new(SpeechFaultKind.Quota,
+            "Azure Speech is rate-limited or out of quota. Try again later or check the resource quota.", detail),
+        CancellationErrorCode.ConnectionFailure or CancellationErrorCode.ServiceTimeout => new(SpeechFaultKind.Network,
+            "Azure Speech could not be reached. Check your network and try again.", detail),
+        _ => new(SpeechFaultKind.Service, "Azure Speech could not transcribe this recording.", detail),
+    };
 
     public void Feed(byte[] pcm16kMono)
     {

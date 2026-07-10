@@ -11,7 +11,11 @@
   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version v0.1.1
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$Version)   # e.g. v0.1.1
+param(
+    [Parameter(Mandatory = $true)][string]$Version,
+    [Parameter(Mandatory = $true)][string]$SignPfx,
+    [Parameter(Mandatory = $true)][string]$SignPassword
+)
 
 $ErrorActionPreference = 'Stop'
 $Repo    = 'fafa-npu/VoiceInput'
@@ -24,6 +28,12 @@ $proj   = Join-Path $repoRoot 'src\VoiceInput\VoiceInput.csproj'
 $pubDir = Join-Path $repoRoot 'publish'
 $exe    = Join-Path $pubDir 'VoiceInput.exe'
 $num    = $Version.TrimStart('v', 'V')
+if (-not (Test-Path -LiteralPath $SignPfx)) { throw "Signing certificate not found: $SignPfx" }
+$certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+    $SignPfx, $SignPassword,
+    [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+$signerSha256 = $certificate.GetCertHashString(
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256)
 
 $token = gh auth token --hostname $Site
 if (-not $token) { throw "No token. Run once: gh auth login --hostname $Site" }
@@ -33,12 +43,17 @@ $H = @{ Authorization = "token $token"; Accept = 'application/vnd.github+json' }
 Write-Host "Building $Version..." -ForegroundColor Cyan
 $pubArgs = @(
     'publish', $proj, '-c', 'Release', '-r', 'win-x64', "-p:Version=$num",
+    "-p:UpdateSignerCertificateSha256=$signerSha256",
     '-p:SelfContained=true', '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true',
     '-o', $pubDir
 )
 & dotnet @pubArgs | Out-Null
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw 'dotnet publish failed.' }
+& signtool sign /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 /f $SignPfx /p $SignPassword $exe
+if ($LASTEXITCODE -ne 0) { throw 'Authenticode signing failed.' }
+& signtool verify /pa /tw $exe | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed.' }
 
 # Create the (published) release, or reuse it if the tag already exists.
 $body = @{

@@ -103,7 +103,18 @@ public sealed class SettingsStore
             DiagnosticLogging = s.DiagnosticLogging,
             UseContext = s.UseContext,
         };
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(dto, JsonOptions));
+        string temp = FilePath + ".tmp";
+        string backup = FilePath + ".backup";
+        File.WriteAllText(temp, JsonSerializer.Serialize(dto, JsonOptions));
+        if (File.Exists(FilePath))
+        {
+            File.Replace(temp, FilePath, backup);
+            File.Delete(backup);
+        }
+        else
+        {
+            File.Move(temp, FilePath);
+        }
     }
 
     private static string Protect(string? plaintext)

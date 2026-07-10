@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Windows.Automation;
 using static VoiceInput.Interop.NativeMethods;
 
 namespace VoiceInput.Services;
@@ -11,22 +13,61 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class TextInjector
 {
-    public Task InjectAsync(string text)
+    public sealed record Target(IntPtr Window, uint ProcessId, string WindowClass, string ControlId);
+    public sealed record Result(bool Success, int CharactersInserted = 0, string? Error = null);
+
+    public Target CaptureTarget()
     {
-        if (string.IsNullOrEmpty(text)) return Task.CompletedTask;
+        IntPtr window = GetForegroundWindow();
+        GetWindowThreadProcessId(window, out uint processId);
+        var className = new StringBuilder(256);
+        _ = GetClassName(window, className, className.Capacity);
+        return new Target(window, processId, className.ToString(), FocusedControlId());
+    }
 
-        // Two INPUTs (down + up) per UTF-16 code unit. Surrogate pairs are sent as their two
-        // code units, which is exactly what KEYEVENTF_UNICODE expects.
-        var inputs = new INPUT[text.Length * 2];
-        int i = 0;
-        foreach (char c in text)
+    public Task<Result> InjectAsync(string text, Target target)
+    {
+        if (string.IsNullOrEmpty(text)) return Task.FromResult(new Result(true));
+        if (!MatchesCurrentTarget(target))
+            return Task.FromResult(new Result(false, 0, "The focused window or input control changed while VoiceInput was processing."));
+
+        for (int i = 0; i < text.Length; i++)
         {
-            inputs[i++] = UnicodeKey(c, up: false);
-            inputs[i++] = UnicodeKey(c, up: true);
+            var inputs = new[] { UnicodeKey(text[i], up: false), UnicodeKey(text[i], up: true) };
+            uint sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>());
+            if (sent != 2)
+                return Task.FromResult(new Result(false, i,
+                    $"Windows accepted only {sent} of 2 keyboard events (error {Marshal.GetLastWin32Error()})."));
         }
+        return Task.FromResult(new Result(true, text.Length));
+    }
 
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        return Task.CompletedTask;
+    public bool IsCurrentTarget(Target target) => MatchesCurrentTarget(target);
+
+    private static bool MatchesCurrentTarget(Target target)
+    {
+        IntPtr window = GetForegroundWindow();
+        if (window != target.Window) return false;
+        GetWindowThreadProcessId(window, out uint processId);
+        if (processId != target.ProcessId) return false;
+        var className = new StringBuilder(256);
+        _ = GetClassName(window, className, className.Capacity);
+        return className.ToString() == target.WindowClass && FocusedControlId() == target.ControlId;
+    }
+
+    private static string FocusedControlId()
+    {
+        try
+        {
+            var focused = AutomationElement.FocusedElement;
+            if (focused is null) return string.Empty;
+            int[] runtimeId = focused.GetRuntimeId();
+            return $"{focused.Current.ProcessId}:{focused.Current.AutomationId}:{string.Join('.', runtimeId)}";
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static INPUT UnicodeKey(char c, bool up) => new()

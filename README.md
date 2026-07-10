@@ -1,15 +1,15 @@
 # VoiceInput (Windows)
 
-A system-tray, hold-to-talk voice input method for Windows — the Windows port of the macOS
-menu-bar dictation app. Hold a key, speak, release, and the transcribed text is typed into
-whatever input field has focus.
+A system-tray, hold-to-talk voice input method for Windows. Hold a key, speak, and release:
+VoiceInput transcribes the recording and inserts it only if the original window and input control
+still have focus.
 
 Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
 ## What makes it different
 
-Most dictation tools just dump raw speech-to-text. VoiceInput adds a **speech-aware LLM refinement
-layer** on top:
+VoiceInput works with Windows dictation by default. An optional **speech-aware LLM refinement
+layer** can be configured for:
 
 - **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
   errors speech recognition actually makes — Chinese homophones / near-homophones, and tech terms
@@ -31,7 +31,7 @@ layer** on top:
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Three speech engines:** **Windows on-device** (no key, offline), **Azure Speech** (streaming,
+- **Three speech engines:** **Windows dictation** (no key; may use Microsoft's online speech service), **Azure Speech** (streaming,
   low-latency zh-CN), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch — highest accuracy,
   transcribes on release). Azure Speech and gpt-4o-transcribe each support **account-key** or
   **Microsoft Entra ID** auth (interactive sign-in, cached so you sign in once).
@@ -40,8 +40,10 @@ layer** on top:
   device cold-start. The mic is fully released when idle or paused.
 - **Capsule overlay** at the bottom of the active monitor (multi-monitor aware) with a live,
   RMS-driven waveform and the running transcript; grows smoothly and shows the latest words.
-- **Reliable injection** by typing the characters directly (SendInput Unicode), so it lands in
-  Chromium/Electron apps too (Microsoft 365 Copilot, Teams) — no clipboard or IME side-effects.
+- **Target-safe injection.** VoiceInput records the original window, process, and focused control,
+  refuses to type after focus changes, and checks every `SendInput` result. Uninserted text is
+  preserved, copied to the clipboard, and available for retry from the tray. Windows security
+  boundaries (for example an elevated app) can still block injection.
 - **Single instance**, **tray-only**, custom mic icon. API keys are DPAPI-encrypted at rest; the
   log never records transcript text unless you turn on diagnostic logging.
 
@@ -69,7 +71,14 @@ Or just download `VoiceInput.exe` from the
 [Releases](https://github.com/fafa-npu/VoiceInput/releases) page and double-click it
 (it's self-contained — no .NET runtime needed).
 
-Uninstall: `scripts\install.ps1 -Uninstall`.
+Uninstall:
+
+```powershell
+powershell -File "$env:LOCALAPPDATA\VoiceInput\uninstall.ps1" -Uninstall
+```
+
+This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correction samples). Add
+`-KeepUserData` to retain it.
 
 ## Configuration
 
@@ -87,11 +96,12 @@ Needs the **.NET 10 SDK**.
 ```bash
 make run        # run from source
 make install    # build + install to %LOCALAPPDATA% + auto-start + launch
-make release VERSION=vX.Y.Z   # build the versioned exe + publish a release (scripts/release.ps1)
+make release VERSION=vX.Y.Z SIGN_PFX=publisher.pfx SIGN_PWD=...  # signed release
 ```
 
-The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists
-— downloaded and applied only when you choose it (never automatic).
+The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists.
+Updates are user-initiated, Authenticode-verified against the publisher certificate embedded at
+build time, atomically replaced, and rolled back if the new process does not stay running.
 
 ## Notes
 
@@ -102,5 +112,9 @@ The app shows its version in the tray and offers **Update to vX.Y.Z…** when a 
   resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
+- UI Automation context is untrusted input. VoiceInput constrains refined output length, rejects
+  control characters and large semantic drift, and falls back to the original transcript.
+- Edit learning is off by default, bound to the original control for two minutes, capped at 100
+  samples, and encrypted per Windows user with DPAPI.
 - The overlay is a custom translucent capsule, not OS acrylic (WPF can't have both transparency and
   a DWM backdrop).

@@ -19,6 +19,7 @@ public interface ISpeechEngine : IDisposable
 
     /// <summary>A finalized segment of recognized text.</summary>
     event Action<string>? Final;
+    event Action<SpeechFault>? Fault;
 
     Task StartAsync(string language);
     void Feed(byte[] pcm16kMono);
@@ -29,6 +30,10 @@ public interface ISpeechEngine : IDisposable
     /// (e.g. a network transcription whose result is thrown away). Default: no-op.</summary>
     void Cancel() { }
 }
+
+public enum SpeechFaultKind { Authentication, Quota, Network, Timeout, Service, Unknown }
+
+public sealed record SpeechFault(SpeechFaultKind Kind, string UserMessage, string? Detail = null);
 
 /// <summary>Thrown when the requested recognition language is not installed/available on the device.</summary>
 public sealed class SpeechLanguageUnavailableException(string language)

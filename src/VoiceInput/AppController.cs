@@ -41,6 +41,13 @@ public sealed class AppController : IDisposable
     private bool _dictating;
     private volatile bool _paused;   // when true, the PTT key is ignored (listening paused, app stays up)
     private float _sessionPeak;      // loudest mic level seen this dictation (0 ⇒ no audio captured)
+    private readonly DictationSession _session = new();
+    private TextInjector.Target? _inputTarget;
+    private SpeechFault? _speechFault;
+    private string? _pendingText;
+    private Action<string>? _partialHandler;
+    private Action<string>? _finalHandler;
+    private Action<SpeechFault>? _faultHandler;
     // Serializes the start/stop/cancel lifecycle so sessions can never overlap
     // (Windows dictation forbids overlapping audio-engine sessions).
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -54,10 +61,18 @@ public sealed class AppController : IDisposable
         _settings = _store.Load();
 
         _hook = new KeyboardHook(_settings.PttKey);
-        _hook.Engaged += () => _ui.BeginInvoke(() => _ = StartDictationAsync());
+        _hook.Engaged += () => _ui.BeginInvoke(() =>
+        {
+            if (_session.State is DictationSessionState.Transcribing or DictationSessionState.Refining)
+            {
+                _session.Cancel();
+                _engine?.Cancel();
+            }
+            _ = StartDictationAsync();
+        });
         _hook.Released += () => _ui.BeginInvoke(() => _ = StopDictationAsync());
         _hook.Cancelled += () => _ui.BeginInvoke(() => _ = CancelDictationAsync());
-        _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader));
+        _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
 
         _audio.LevelChanged += lvl => { _level = lvl; if (lvl > _sessionPeak) _sessionPeak = lvl; };
     }
@@ -90,7 +105,10 @@ public sealed class AppController : IDisposable
 
         Notify("VoiceInput is running",
             $"It lives in the system tray (blue mic, bottom-right) — there's no main window. " +
-            $"Hold {PttDisplay(_settings.PttKey)} to talk, release to type. Opening Settings so you can pick a speech engine…");
+            $"Hold {PttDisplay(_settings.PttKey)} to talk, release to type. VoiceInput observes the global PTT key " +
+            "but does not save ordinary keystrokes. Windows recognition may use Microsoft's online speech service; " +
+            "Azure/Foundry send audio to your configured cloud. Optional UIA context sends visible app text to your LLM, " +
+            "and edit learning stores encrypted correction samples locally. All optional privacy features start off.");
 
         // Give the tray balloon a moment to appear before the window steals attention.
         _ui.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(OpenSettings));
@@ -128,8 +146,13 @@ public sealed class AppController : IDisposable
         try
         {
             if (_dictating || _paused) return;
+            var session = _session.Begin();
+            long generation = session.Generation;
+            CancellationToken ct = session.Token;
             DisposeEngine();           // safety: clear any engine a prior session failed to tear down
             _dictating = true;
+            _inputTarget = _injector.CaptureTarget();
+            _speechFault = null;
             ClearTranscript();
             _level = 0;
             _sessionPeak = 0f;
@@ -141,22 +164,33 @@ public sealed class AppController : IDisposable
                 _overlay!.ShowListening(Preparing());
 
                 _engine = CreateEngine(out bool azureFellBack);
-                if (azureFellBack)
-                    Notify("Speech engine not configured", "Falling back to Windows on-device recognition.");
 
                 Log.Write($"PTT engaged -> start dictation (engine={_engine.GetType().Name}, lang={_settings.Language}, azureFellBack={azureFellBack})");
 
-                _engine.Partial += OnPartial;
-                _engine.Final += OnFinal;
+                _partialHandler = text => { if (_session.IsCurrent(generation)) OnPartial(text); };
+                _finalHandler = text => { if (_session.IsCurrent(generation)) OnFinal(text); };
+                _faultHandler = fault => { if (_session.IsCurrent(generation)) OnSpeechFault(fault); };
+                _engine.Partial += _partialHandler;
+                _engine.Final += _finalHandler;
+                _engine.Fault += _faultHandler;
                 if (_engine is OpenAiTranscribeEngine transcribe)
                     transcribe.AuthExpired += OnTranscribeAuthExpired;
 
                 // Start the engine first so the audio feed never arrives before it's ready.
                 // Bound StartAsync so a hung SDK call can't hold the gate forever (real errors still propagate).
                 var startTask = _engine.StartAsync(_settings.Language);
-                if (await Task.WhenAny(startTask, Task.Delay(StartTimeoutMs)) != startTask)
+                if (await Task.WhenAny(startTask, Task.Delay(StartTimeoutMs, ct)) != startTask)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    _engine.Cancel();
+                    _ = startTask.ContinueWith(t => Log.Error("Late engine start", t.Exception!),
+                        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
                     throw new TimeoutException("Speech engine start timed out.");
+                }
                 await startTask;
+                ct.ThrowIfCancellationRequested();
+                if (!_session.IsCurrent(generation) || _paused)
+                    throw new OperationCanceledException(ct);
 
                 if (_engine.NeedsAudioFeed)
                     _audio.PcmChunkAvailable += OnPcm;
@@ -165,8 +199,15 @@ public sealed class AppController : IDisposable
                 // delivering audio — so a cold-start device doesn't clip the first words.
                 _audio.BeginSession();
                 bool live = await Task.WhenAny(_audio.FirstFrame, Task.Delay(FirstFrameTimeoutMs)) == _audio.FirstFrame;
+                ct.ThrowIfCancellationRequested();
+                _session.MoveTo(DictationSessionState.Listening);
                 _overlay!.SetText(Placeholder());
                 Log.Write(live ? "Engine started, mic live — listening…" : "Engine started, mic warm-up timed out — listening anyway…");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _session.MoveTo(DictationSessionState.Cancelled);
+                await AbortInternalAsync();
             }
             catch (SpeechLanguageUnavailableException ex)
             {
@@ -204,12 +245,20 @@ public sealed class AppController : IDisposable
         {
             if (!_dictating) return;
             _dictating = false;
+            _session.MoveTo(DictationSessionState.Transcribing);
+            CancellationToken ct = _session.Token;
 
             // Batch engines (e.g. gpt-4o-transcribe) do the work on stop; show progress instead of "listening".
             if (_engine is { HasInterimResults: false })
                 _overlay!.SetStatus("Transcribing…");
 
             await TeardownEngineAsync();
+            if (ct.IsCancellationRequested)
+            {
+                _session.MoveTo(DictationSessionState.Cancelled);
+                _overlay!.HideAnimated();
+                return;
+            }
 
             string text = ComposeTranscript();
             Log.Write(_settings.DiagnosticLogging
@@ -219,7 +268,9 @@ public sealed class AppController : IDisposable
             if (string.IsNullOrWhiteSpace(text))
             {
                 Log.Write($"Empty transcript — nothing recognized (peak level {_sessionPeak:F3}).");
-                if (_sessionPeak < 0.02f)
+                if (_speechFault is not null)
+                    Notify("Transcription failed", _speechFault.UserMessage);
+                else if (_sessionPeak < 0.02f)
                     Notify("No microphone audio",
                         "VoiceInput didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
                 _overlay!.HideAnimated();
@@ -227,11 +278,25 @@ public sealed class AppController : IDisposable
             }
 
             string raw = text;   // raw STT, before LLM refine — recorded for correction learning
+            var target = _inputTarget;
+            if (target is null || !_injector.IsCurrentTarget(target))
+            {
+                PreserveText(text, "The focused window or input control changed while VoiceInput was processing.");
+                _overlay!.HideAnimated();
+                return;
+            }
             if (_settings.LlmEnabled && !string.IsNullOrWhiteSpace(_settings.LlmBaseUrl))
             {
+                _session.MoveTo(DictationSessionState.Refining);
                 _overlay!.SetStatus("Refining…");
                 string? context = _settings.UseContext ? await _contextReader.TryReadAsync() : null;
-                string refined = await _refiner.RefineAsync(text, _settings, context);
+                string refined = await _refiner.RefineAsync(text, _settings, context, _session.Token);
+                if (ct.IsCancellationRequested)
+                {
+                    PreserveText(text, "A newer dictation cancelled refinement.");
+                    _overlay!.HideAnimated();
+                    return;
+                }
                 Log.Write(_settings.DiagnosticLogging
                     ? $"LLM refine (ctx {context?.Length ?? 0}): \"{Trim(text)}\" -> \"{Trim(refined)}\""
                     : $"LLM refine: {text.Length} -> {refined.Length} chars (ctx {context?.Length ?? 0})");
@@ -239,9 +304,17 @@ public sealed class AppController : IDisposable
             }
 
             _overlay!.HideAnimated();
-            await _injector.InjectAsync(text);
+            _session.MoveTo(DictationSessionState.Injecting);
+            var result = await _injector.InjectAsync(text, target);
+            if (!result.Success)
+            {
+                PreserveText(text[result.CharactersInserted..], result.Error ?? "Windows rejected text injection.");
+                _session.MoveTo(DictationSessionState.Failed);
+                return;
+            }
             Log.Write("Injected into focused control.");
-            if (_settings.LearnFromEdits) _corrections.Arm(raw, text);
+            if (_settings.LearnFromEdits) _corrections.Arm(raw, text, target);
+            _session.MoveTo(DictationSessionState.Idle);
         }
         finally
         {
@@ -270,6 +343,7 @@ public sealed class AppController : IDisposable
     private async Task AbortInternalAsync()
     {
         _dictating = false;
+        _session.MoveTo(DictationSessionState.Cancelled);
         _engine?.Cancel();   // discard: skip any network transcription for an aborted/cancelled session
         await TeardownEngineAsync();
         ClearTranscript();
@@ -320,6 +394,12 @@ public sealed class AppController : IDisposable
 
     private void OnPcm(byte[] pcm) => _engine?.Feed(pcm);
 
+    private void OnSpeechFault(SpeechFault fault)
+    {
+        _speechFault = fault;
+        Log.Write($"Speech fault: {fault.Kind} - {fault.Detail ?? fault.UserMessage}");
+    }
+
     // _finals/_partial are touched by engine callback threads and the UI thread; guard every access.
     private string ComposeTranscript()
     {
@@ -361,7 +441,7 @@ public sealed class AppController : IDisposable
                     return AzureSpeechEngine.ForKey(_settings.AzureKey, _settings.AzureRegion);
                 }
                 azureFellBack = true;
-                break;
+                throw new InvalidOperationException("Azure Speech is selected but its authentication settings are incomplete.");
 
             case SpeechEngineKind.GptTranscribe:
                 if (!string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint) && !string.IsNullOrWhiteSpace(_settings.TranscribeModel))
@@ -380,7 +460,7 @@ public sealed class AppController : IDisposable
                     }
                 }
                 azureFellBack = true;
-                break;
+                throw new InvalidOperationException("Foundry transcription is selected but its endpoint, deployment, or authentication settings are incomplete.");
         }
         return new WindowsSpeechEngine();
     }
@@ -388,8 +468,12 @@ public sealed class AppController : IDisposable
     private void DisposeEngine()
     {
         if (_engine is null) return;
-        _engine.Partial -= OnPartial;
-        _engine.Final -= OnFinal;
+        if (_partialHandler is not null) _engine.Partial -= _partialHandler;
+        if (_finalHandler is not null) _engine.Final -= _finalHandler;
+        if (_faultHandler is not null) _engine.Fault -= _faultHandler;
+        _partialHandler = null;
+        _finalHandler = null;
+        _faultHandler = null;
         if (_engine is OpenAiTranscribeEngine transcribe)
             transcribe.AuthExpired -= OnTranscribeAuthExpired;
         _engine.Dispose();
@@ -438,12 +522,19 @@ public sealed class AppController : IDisposable
 
     private string TrayTooltip() => _paused
         ? "VoiceInput — paused"
-        : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+        : _session.State is not DictationSessionState.Idle
+            ? $"VoiceInput — {_session.State.ToString().ToLowerInvariant()}"
+            : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
 
     private void TogglePause()
     {
         _paused = !_paused;
-        if (_paused) _audio.Release();   // drop any warm mic so paused == mic fully off
+        if (_paused)
+        {
+            _session.Cancel();
+            _audio.Release();   // drop any warm mic so paused == mic fully off
+            if (_dictating) _ = CancelDictationAsync();
+        }
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
             _paused ? "VoiceInput won't respond to the push-to-talk key until resumed."
@@ -499,6 +590,17 @@ public sealed class AppController : IDisposable
         menu.Items.Add(header);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
+        if (!string.IsNullOrEmpty(_pendingText))
+        {
+            var retry = new WinForms.ToolStripMenuItem("Retry pending text");
+            retry.Click += (_, _) => _ = RetryPendingTextAsync();
+            menu.Items.Add(retry);
+            var copy = new WinForms.ToolStripMenuItem("Copy pending text");
+            copy.Click += (_, _) => CopyPendingText();
+            menu.Items.Add(copy);
+            menu.Items.Add(new WinForms.ToolStripSeparator());
+        }
+
         var pause = new WinForms.ToolStripMenuItem(_paused ? "Resume listening" : "Pause listening");
         pause.Click += (_, _) => TogglePause();
         menu.Items.Add(pause);
@@ -543,7 +645,10 @@ public sealed class AppController : IDisposable
         // LLM refinement (enable toggle; full config lives in the top-level Settings window)
         var llm = new WinForms.ToolStripMenuItem("LLM Refinement");
         var enabled = new WinForms.ToolStripMenuItem("Enabled") { Checked = _settings.LlmEnabled };
-        enabled.Click += (_, _) => { _settings.LlmEnabled = !_settings.LlmEnabled; Persist(); RebuildMenu(); };
+        enabled.Click += (_, _) => ToggleSensitiveSetting(
+            "Enable cloud LLM refinement?",
+            "Dictated text will be sent to the configured LLM endpoint. If context is enabled, surrounding app text is sent too.",
+            () => _settings.LlmEnabled = !_settings.LlmEnabled, _settings.LlmEnabled);
         llm.DropDownItems.Add(enabled);
         menu.Items.Add(llm);
 
@@ -563,11 +668,17 @@ public sealed class AppController : IDisposable
         menu.Items.Add(autostart);
 
         var ctx = new WinForms.ToolStripMenuItem("Use surrounding context (UIA)") { Checked = _settings.UseContext };
-        ctx.Click += (_, _) => { _settings.UseContext = !_settings.UseContext; Persist(); RebuildMenu(); };
+        ctx.Click += (_, _) => ToggleSensitiveSetting(
+            "Enable surrounding context?",
+            "VoiceInput will read text from the focused app with UI Automation and send it to your configured LLM.",
+            () => _settings.UseContext = !_settings.UseContext, _settings.UseContext);
         menu.Items.Add(ctx);
 
         var learn = new WinForms.ToolStripMenuItem("Learn from my edits") { Checked = _settings.LearnFromEdits };
-        learn.Click += (_, _) => { _settings.LearnFromEdits = !_settings.LearnFromEdits; Persist(); RebuildMenu(); };
+        learn.Click += (_, _) => ToggleSensitiveSetting(
+            "Enable edit learning?",
+            "For up to two minutes after a successful insertion, Enter may capture the same input control. Up to 100 encrypted correction samples are stored locally.",
+            () => _settings.LearnFromEdits = !_settings.LearnFromEdits, _settings.LearnFromEdits);
         menu.Items.Add(learn);
 
         var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
@@ -575,7 +686,10 @@ public sealed class AppController : IDisposable
         menu.Items.Add(learnNow);
 
         var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
-        diag.Click += (_, _) => { _settings.DiagnosticLogging = !_settings.DiagnosticLogging; Persist(); RebuildMenu(); };
+        diag.Click += (_, _) => ToggleSensitiveSetting(
+            "Log dictated text?",
+            "Full transcripts and LLM output may contain passwords or other sensitive data and will be written in plaintext to the diagnostic log.",
+            () => _settings.DiagnosticLogging = !_settings.DiagnosticLogging, _settings.DiagnosticLogging);
         menu.Items.Add(diag);
 
         var update = new WinForms.ToolStripMenuItem(
@@ -715,6 +829,46 @@ public sealed class AppController : IDisposable
     private void Notify(string title, string message) =>
         _tray?.ShowBalloonTip(6000, title, message, WinForms.ToolTipIcon.Info);
 
+    private void ToggleSensitiveSetting(string title, string warning, Action toggle, bool currentlyEnabled)
+    {
+        if (!currentlyEnabled && MessageBox.Show(warning, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+        toggle();
+        Persist();
+        RebuildMenu();
+    }
+
+    private void PreserveText(string text, string reason)
+    {
+        _pendingText = text;
+        CopyPendingText();
+        Notify("Text was not inserted",
+            $"{reason} The remaining text was preserved and copied to the clipboard; use the tray menu to retry.");
+        RebuildMenu();
+    }
+
+    private void CopyPendingText()
+    {
+        if (string.IsNullOrEmpty(_pendingText)) return;
+        try { Clipboard.SetText(_pendingText); }
+        catch (Exception ex) { Log.Error("Copy pending text", ex); }
+    }
+
+    private async Task RetryPendingTextAsync()
+    {
+        string? text = _pendingText;
+        if (string.IsNullOrEmpty(text)) return;
+        var result = await _injector.InjectAsync(text, _injector.CaptureTarget());
+        if (!result.Success)
+        {
+            PreserveText(text[result.CharactersInserted..], result.Error ?? "Windows rejected text injection.");
+            return;
+        }
+        _pendingText = null;
+        Notify("Text inserted", "The preserved text was inserted into the current control.");
+        RebuildMenu();
+    }
+
     private static bool IsPrivacyPolicyError(Exception ex) =>
         ex.Message.Contains("privacy", StringComparison.OrdinalIgnoreCase);
 
@@ -726,6 +880,7 @@ public sealed class AppController : IDisposable
 
     public void Dispose()
     {
+        _session.Dispose();
         _hook.Dispose();
         _audio.Dispose();
         DisposeEngine();
