@@ -308,7 +308,7 @@ public sealed class AppController : IDisposable
             var result = await _injector.InjectAsync(text, target);
             if (!result.Success)
             {
-                PreserveText(text[result.CharactersInserted..], result.Error ?? "Windows rejected text injection.");
+                HandleInjectionFailure(text, result);
                 _session.MoveTo(DictationSessionState.Failed);
                 return;
             }
@@ -867,11 +867,25 @@ public sealed class AppController : IDisposable
         var result = await _injector.InjectAsync(text, _injector.CaptureTarget());
         if (!result.Success)
         {
-            PreserveText(text[result.CharactersInserted..], result.Error ?? "Windows rejected text injection.");
+            HandleInjectionFailure(text, result);
             return;
         }
         _pendingText = null;
         Notify("Text inserted", "The preserved text was inserted into the current control.");
+        RebuildMenu();
+    }
+
+    private void HandleInjectionFailure(string text, TextInjector.Result result)
+    {
+        int inserted = Math.Clamp(result.CharactersInserted, 0, text.Length);
+        if (inserted < text.Length)
+        {
+            PreserveText(text[inserted..], result.Error ?? "Windows rejected text injection.");
+            return;
+        }
+        _pendingText = null;
+        Notify("Text injection warning",
+            $"{result.Error ?? "Windows reported an incomplete injection."} No characters remain to retry.");
         RebuildMenu();
     }
 

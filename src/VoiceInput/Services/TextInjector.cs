@@ -38,7 +38,7 @@ public sealed class TextInjector
             var inputs = new[] { UnicodeKey(text[i], up: false), UnicodeKey(text[i], up: true) };
             uint sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>());
             if (sent != 2)
-                return Task.FromResult(new Result(false, i,
+                return Task.FromResult(new Result(false, sent > 0 ? i + 1 : i,
                     $"Windows accepted only {sent} of 2 keyboard events (error {Marshal.GetLastWin32Error()})."));
         }
         return Task.FromResult(new Result(true, text.Length));

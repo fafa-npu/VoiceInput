@@ -109,7 +109,7 @@ public sealed class SettingsStore
         if (File.Exists(FilePath))
         {
             File.Replace(temp, FilePath, backup);
-            File.Delete(backup);
+            try { File.Delete(backup); } catch { }
         }
         else
         {

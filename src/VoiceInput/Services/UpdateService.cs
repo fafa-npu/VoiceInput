@@ -126,7 +126,12 @@ public sealed class UpdateService
             psi.ArgumentList.Add(target);
             psi.ArgumentList.Add("-ProcessId");
             psi.ArgumentList.Add(pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            if (Process.Start(psi) is null) return false;
+            if (Process.Start(psi) is null)
+            {
+                Log.Write("Update helper could not be started.");
+                Directory.Delete(dir, recursive: true);
+                return false;
+            }
             return true;
         }
         catch
