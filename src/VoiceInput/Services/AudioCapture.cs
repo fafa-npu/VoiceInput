@@ -152,7 +152,8 @@ public sealed class AudioCapture : IDisposable
         catch (NotSupportedException ex)
         {
             Log.Error("AudioCapture format", ex);
-            Release();
+            _sessionActive = false;
+            _ = Task.Run(Release);
             return;
         }
         if (frames == 0) return;

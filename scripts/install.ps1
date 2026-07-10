@@ -107,6 +107,9 @@ $signature = Get-AuthenticodeSignature -LiteralPath $Source
 if ($signature.Status -ne 'Valid' -and -not $AllowUnsignedDevelopmentBuild) {
     throw "VoiceInput.exe does not have a valid Authenticode signature ($($signature.Status))."
 }
+if ($signature.Status -ne 'Valid') {
+    Write-Warning 'Installing an unsigned development build. Never use -AllowUnsignedDevelopmentBuild for a downloaded release.'
+}
 
 Stop-App
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null

@@ -33,6 +33,7 @@ public sealed class UpdateService
 
     public async Task<CheckResult> CheckAsync()
     {
+        // Unsigned development builds intentionally have no publisher pin and must never offer updates.
         if (string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256))
             return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)

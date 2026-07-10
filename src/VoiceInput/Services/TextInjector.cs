@@ -13,16 +13,16 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class TextInjector
 {
-    public sealed record Target(IntPtr Window, uint ProcessId, string WindowClass, string ControlId);
+    public sealed record Target(IntPtr Window, uint ProcessId, string WindowClass, IntPtr FocusedControl, string ControlId);
     public sealed record Result(bool Success, int CharactersInserted = 0, string? Error = null);
 
     public Target CaptureTarget()
     {
         IntPtr window = GetForegroundWindow();
-        GetWindowThreadProcessId(window, out uint processId);
+        uint threadId = GetWindowThreadProcessId(window, out uint processId);
         var className = new StringBuilder(256);
         _ = GetClassName(window, className, className.Capacity);
-        return new Target(window, processId, className.ToString(), FocusedControlId());
+        return new Target(window, processId, className.ToString(), FocusedControlWindow(threadId), FocusedControlId());
     }
 
     public Task<Result> InjectAsync(string text, Target target)
@@ -33,6 +33,8 @@ public sealed class TextInjector
 
         for (int i = 0; i < text.Length; i++)
         {
+            if (GetForegroundWindow() != target.Window || i % 32 == 0 && !MatchesCurrentTarget(target))
+                return Task.FromResult(new Result(false, i, "The focused window or input control changed during insertion."));
             var inputs = new[] { UnicodeKey(text[i], up: false), UnicodeKey(text[i], up: true) };
             uint sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>());
             if (sent != 2)
@@ -48,11 +50,19 @@ public sealed class TextInjector
     {
         IntPtr window = GetForegroundWindow();
         if (window != target.Window) return false;
-        GetWindowThreadProcessId(window, out uint processId);
+        uint threadId = GetWindowThreadProcessId(window, out uint processId);
         if (processId != target.ProcessId) return false;
         var className = new StringBuilder(256);
         _ = GetClassName(window, className, className.Capacity);
-        return className.ToString() == target.WindowClass && FocusedControlId() == target.ControlId;
+        return className.ToString() == target.WindowClass &&
+            FocusedControlWindow(threadId) == target.FocusedControl &&
+            FocusedControlId() == target.ControlId;
+    }
+
+    private static IntPtr FocusedControlWindow(uint threadId)
+    {
+        var info = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
+        return GetGUIThreadInfo(threadId, ref info) ? info.hwndFocus : IntPtr.Zero;
     }
 
     private static string FocusedControlId()

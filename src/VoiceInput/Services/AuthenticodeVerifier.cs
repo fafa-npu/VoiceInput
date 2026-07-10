@@ -22,7 +22,7 @@ internal static class AuthenticodeVerifier
 
         try
         {
-#pragma warning disable SYSLIB0057 // The legacy API is the only BCL API that extracts an embedded PE signer certificate.
+#pragma warning disable SYSLIB0057 // X509CertificateLoader reads certificate blobs, but cannot extract a PE embedded signer.
             using X509Certificate signer = X509Certificate.CreateFromSignedFile(filePath);
 #pragma warning restore SYSLIB0057
             using var signer2 = X509CertificateLoader.LoadCertificate(signer.Export(X509ContentType.Cert));

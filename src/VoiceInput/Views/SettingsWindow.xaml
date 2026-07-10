@@ -20,6 +20,9 @@
                 <Run FontWeight="Bold">gpt-4o-transcribe (Foundry)</Run>
                 <Run>below and fill in the Foundry Endpoint + Deployment.</Run>
                 <Run>"LLM refinement" and its "Test" button are optional — leave them off to start.</Run>
+                <LineBreak /><LineBreak />
+                <Run FontWeight="Bold">Privacy.</Run>
+                <Run>The app observes the global push-to-talk key but does not save ordinary keys. Cloud engines send audio; LLM refinement sends dictated text. UIA context and encrypted edit learning are separate, off-by-default choices in the tray.</Run>
             </TextBlock>
         </Border>
         <Grid>

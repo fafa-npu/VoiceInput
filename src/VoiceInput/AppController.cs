@@ -65,8 +65,8 @@ public sealed class AppController : IDisposable
         {
             if (_session.State is DictationSessionState.Transcribing or DictationSessionState.Refining)
             {
-                _session.Cancel();
-                _engine?.Cancel();
+                Notify("Still processing", "Wait for the current dictation to finish before starting another.");
+                return;
             }
             _ = StartDictationAsync();
         });
@@ -441,7 +441,9 @@ public sealed class AppController : IDisposable
                     return AzureSpeechEngine.ForKey(_settings.AzureKey, _settings.AzureRegion);
                 }
                 azureFellBack = true;
-                throw new InvalidOperationException("Azure Speech is selected but its authentication settings are incomplete.");
+                throw new InvalidOperationException(_settings.AzureAuthMode == AzureAuthMode.Key
+                    ? "Azure Speech key authentication requires both Key and Region in Settings."
+                    : "Azure Speech Entra authentication requires an HTTPS Endpoint in Settings.");
 
             case SpeechEngineKind.GptTranscribe:
                 if (!string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint) && !string.IsNullOrWhiteSpace(_settings.TranscribeModel))
@@ -460,7 +462,11 @@ public sealed class AppController : IDisposable
                     }
                 }
                 azureFellBack = true;
-                throw new InvalidOperationException("Foundry transcription is selected but its endpoint, deployment, or authentication settings are incomplete.");
+                if (string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint))
+                    throw new InvalidOperationException("Foundry transcription requires an HTTPS Endpoint in Settings.");
+                if (string.IsNullOrWhiteSpace(_settings.TranscribeModel))
+                    throw new InvalidOperationException("Foundry transcription requires a Deployment in Settings.");
+                throw new InvalidOperationException("Foundry key authentication requires an API Key in Settings.");
         }
         return new WindowsSpeechEngine();
     }
