@@ -764,6 +764,11 @@ public sealed class AppController : IDisposable
                         Notify("Update check failed",
                             $"Couldn't reach GitHub Releases for {UpdateService.Repo}. Check your connection and try again.");
                     break;
+                case UpdateService.CheckOutcome.UpdatesDisabled:
+                    if (!silent)
+                        Notify("Updates unavailable",
+                            "This development build is not signed by a pinned publisher. Install an official release to enable updates.");
+                    break;
             }
         });
     }

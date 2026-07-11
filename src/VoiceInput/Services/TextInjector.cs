@@ -13,6 +13,8 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class TextInjector
 {
+    private static readonly int InputSize = Marshal.SizeOf<INPUT>();
+
     public sealed record Target(IntPtr Window, uint ProcessId, string WindowClass, IntPtr FocusedControl, string ControlId);
     public sealed record Result(bool Success, int CharactersInserted = 0, string? Error = null);
 
@@ -31,20 +33,25 @@ public sealed class TextInjector
         if (!MatchesCurrentTarget(target))
             return Task.FromResult(new Result(false, 0, "The focused window or input control changed while VoiceInput was processing."));
 
+        var inputs = new INPUT[2];
         for (int i = 0; i < text.Length; i++)
         {
             if (GetForegroundWindow() != target.Window || i % 32 == 0 && !MatchesCurrentTarget(target))
                 return Task.FromResult(new Result(false, i, "The focused window or input control changed during insertion."));
-            var inputs = new[] { UnicodeKey(text[i], up: false), UnicodeKey(text[i], up: true) };
-            uint sent = SendInput(2, inputs, Marshal.SizeOf<INPUT>());
+            inputs[0] = UnicodeKey(text[i], up: false);
+            inputs[1] = UnicodeKey(text[i], up: true);
+            uint sent = SendInput(2, inputs, InputSize);
             if (sent != 2)
-                return Task.FromResult(new Result(false, sent > 0 ? i + 1 : i,
+                return Task.FromResult(new Result(false, CompletedCharacters(i, sent),
                     $"Windows accepted only {sent} of 2 keyboard events (error {Marshal.GetLastWin32Error()})."));
         }
         return Task.FromResult(new Result(true, text.Length));
     }
 
     public bool IsCurrentTarget(Target target) => MatchesCurrentTarget(target);
+
+    internal static int CompletedCharacters(int charactersBeforeCurrent, uint eventsSent) =>
+        eventsSent == 2 ? charactersBeforeCurrent + 1 : charactersBeforeCurrent;
 
     private static bool MatchesCurrentTarget(Target target)
     {

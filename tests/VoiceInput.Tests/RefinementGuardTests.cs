@@ -23,4 +23,12 @@ public sealed class RefinementGuardTests
         Assert.False(RefinementGuard.IsSafe(
             "update Python parser branch release today",
             "delete database credentials immediately now"));
+
+    [Fact]
+    public void RejectsBlankOutput() =>
+        Assert.False(RefinementGuard.IsSafe("keep this transcript", " \t"));
+
+    [Fact]
+    public void AllowsCommonWhitespaceControls() =>
+        Assert.True(RefinementGuard.IsSafe("first line second line", "first line\nsecond line"));
 }

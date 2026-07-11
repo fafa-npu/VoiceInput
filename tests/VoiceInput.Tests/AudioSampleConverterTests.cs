@@ -19,6 +19,33 @@ public sealed class AudioSampleConverterTests
     }
 
     [Fact]
+    public void DecodesUnsignedPcm8()
+    {
+        byte[] bytes = [0, 128, 255];
+        float[] reusable = [];
+
+        float[] mono = AudioSampleConverter.DecodeMono(
+            bytes, bytes.Length, new WaveFormat(48000, 8, 1), ref reusable, out int frames);
+
+        Assert.Equal(3, frames);
+        Assert.Equal(-1f, mono[0]);
+        Assert.Equal(0f, mono[1]);
+        Assert.InRange(mono[2], 0.99f, 1f);
+    }
+
+    [Fact]
+    public void IgnoresIncompleteTrailingFrame()
+    {
+        byte[] bytes = [0, 0, 0];
+        float[] reusable = [];
+
+        _ = AudioSampleConverter.DecodeMono(
+            bytes, bytes.Length, new WaveFormat(48000, 16, 1), ref reusable, out int frames);
+
+        Assert.Equal(1, frames);
+    }
+
+    [Fact]
     public void DecodesSignedPcm24()
     {
         byte[] bytes = [0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80];

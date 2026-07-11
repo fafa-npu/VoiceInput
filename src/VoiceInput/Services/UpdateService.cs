@@ -27,7 +27,7 @@ public sealed class UpdateService
         }
     }
 
-    public enum CheckOutcome { UpToDate, UpdateAvailable, CheckFailed }
+    public enum CheckOutcome { UpToDate, UpdateAvailable, UpdatesDisabled, CheckFailed }
 
     public sealed record CheckResult(CheckOutcome Outcome, string? LatestTag, Version? Latest, string? AssetApiUrl);
 
@@ -35,7 +35,7 @@ public sealed class UpdateService
     {
         // Unsigned development builds intentionally have no publisher pin and must never offer updates.
         if (string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256))
-            return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
+            return new CheckResult(CheckOutcome.UpdatesDisabled, null, null, null);
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
         try

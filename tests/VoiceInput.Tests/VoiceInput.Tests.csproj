@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -10,7 +11,6 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -20,9 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../../src/VoiceInput/Services/AudioSampleConverter.cs" Link="Services/AudioSampleConverter.cs" />
-    <Compile Include="../../src/VoiceInput/Services/DictationSession.cs" Link="Services/DictationSession.cs" />
-    <Compile Include="../../src/VoiceInput/Services/RefinementGuard.cs" Link="Services/RefinementGuard.cs" />
+    <ProjectReference Include="../../src/VoiceInput/VoiceInput.csproj"
+                      AdditionalProperties="EnableWindowsTargeting=true" />
   </ItemGroup>
 
 </Project>

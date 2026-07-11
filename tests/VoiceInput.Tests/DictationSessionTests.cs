@@ -31,4 +31,16 @@ public sealed class DictationSessionTests
         Assert.True(current.Token.IsCancellationRequested);
         Assert.Equal(DictationSessionState.Cancelled, session.State);
     }
+
+    [Fact]
+    public void DisposeInvalidatesCurrentGeneration()
+    {
+        var session = new DictationSession();
+        var current = session.Begin();
+
+        session.Dispose();
+
+        Assert.True(current.Token.IsCancellationRequested);
+        Assert.False(session.IsCurrent(current.Generation));
+    }
 }

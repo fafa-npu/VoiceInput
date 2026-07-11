@@ -35,7 +35,7 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     /// can notify the user and re-authenticate in the background, off the dictation lock.</summary>
     public event Action? AuthExpired;
 
-    private OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
+    internal OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
     {
         _url = url;
         _applyAuth = applyAuth;
@@ -86,8 +86,11 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     public void Cancel()
     {
-        _canceled = true;
-        _requestCts?.Cancel();
+        lock (_lock)
+        {
+            _canceled = true;
+            _requestCts?.Cancel();
+        }
     }
 
     public void Feed(byte[] pcm16kMono)
@@ -105,10 +108,15 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         lock (_lock) { pcm = _buffer.ToArray(); }
         if (pcm.Length == 0) return;
 
+        var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
+        lock (_lock)
+        {
+            _requestCts = requestCts;
+            if (_canceled) requestCts.Cancel();
+        }
+
         try
         {
-            using var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
-            _requestCts = requestCts;
             byte[] wav = BuildWav(pcm, AudioCapture.TargetSampleRate);
 
             using var form = new MultipartFormDataContent();
@@ -173,7 +181,12 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         }
         finally
         {
-            _requestCts = null;
+            lock (_lock)
+            {
+                if (ReferenceEquals(_requestCts, requestCts))
+                    _requestCts = null;
+            }
+            requestCts.Dispose();
         }
     }
 
