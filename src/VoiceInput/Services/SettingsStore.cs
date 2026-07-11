@@ -120,7 +120,7 @@ public sealed class SettingsStore
             if (File.Exists(_filePath))
             {
                 File.Replace(temp, _filePath, backup);
-                try { File.Delete(backup); } catch { }
+                try { File.Delete(backup); } catch { /* A leftover backup is harmless. */ }
             }
             else
             {
@@ -129,7 +129,7 @@ public sealed class SettingsStore
         }
         finally
         {
-            try { File.Delete(temp); } catch { }
+            try { File.Delete(temp); } catch { /* Preserve the original save exception. */ }
         }
     }
 

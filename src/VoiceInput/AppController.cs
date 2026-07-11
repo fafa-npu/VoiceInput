@@ -183,7 +183,8 @@ public sealed class AppController : IDisposable
                 {
                     ct.ThrowIfCancellationRequested();
                     _engine.Cancel();
-                    _ = startTask.ContinueWith(t => Log.Error("Late engine start", t.Exception!),
+                    _ = startTask.ContinueWith(t => Log.Error("Late engine start",
+                            t.Exception ?? new Exception("Speech engine start failed without exception details.")),
                         CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
                     throw new TimeoutException("Speech engine start timed out.");
                 }

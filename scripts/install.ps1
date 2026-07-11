@@ -51,7 +51,9 @@ function Install-FileAtomic([string]$SourcePath, [string]$DestinationPath) {
     $staged = "$DestinationPath.new"
     $backup = "$DestinationPath.backup"
     Copy-Item -LiteralPath $SourcePath -Destination $staged -Force
-    if ((Get-Item -LiteralPath $staged).Length -ne (Get-Item -LiteralPath $SourcePath).Length) {
+    $sourceFile = Get-Item -LiteralPath $SourcePath
+    $stagedFile = Get-Item -LiteralPath $staged
+    if ($stagedFile.Length -ne $sourceFile.Length) {
         throw 'Staged executable size does not match the source.'
     }
     if (Test-Path -LiteralPath $DestinationPath) {
