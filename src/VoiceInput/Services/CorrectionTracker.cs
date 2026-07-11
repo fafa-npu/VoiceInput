@@ -24,6 +24,7 @@ public sealed class CorrectionTracker
     private DateTimeOffset _expiresAt;
     private const int MaxEntries = 100;
     private const int MaxTextLength = 1000;
+    private static readonly TimeSpan CaptureLifetime = TimeSpan.FromMinutes(2);
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("VoiceInput.corrections.v2");
 
     public void Arm(string raw, string injected, TextInjector.Target target)
@@ -31,7 +32,7 @@ public sealed class CorrectionTracker
         _raw = Limit(raw);
         _injected = Limit(injected);
         _target = target;
-        _expiresAt = DateTimeOffset.UtcNow.AddMinutes(2);
+        _expiresAt = DateTimeOffset.UtcNow.Add(CaptureLifetime);
     }
 
     public async Task CaptureAsync(ContextReader reader, TextInjector injector)

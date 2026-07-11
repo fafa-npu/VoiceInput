@@ -86,7 +86,7 @@ public partial class SettingsWindow : Window
         };
         _draft.AzureAuthMode = AzureAuthCombo.SelectedIndex == 1 ? AzureAuthMode.EntraId : AzureAuthMode.Key;
         _draft.TranscribeAuthMode = TranscribeAuthCombo.SelectedIndex == 1 ? AzureAuthMode.EntraId : AzureAuthMode.Key;
-        _draft.AzureKey = AzureKeyBox.Password.Trim();
+        _draft.AzureKey = AzureKeyBox.Password;
         _draft.AzureRegion = AzureRegionBox.Text.Trim();
         _draft.AzureEndpoint = AzureEndpointBox.Text.Trim();
         _draft.AzureTenantId = AzureTenantIdBox.Text.Trim();

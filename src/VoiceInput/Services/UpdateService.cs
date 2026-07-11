@@ -84,6 +84,7 @@ public sealed class UpdateService
 
         try
         {
+            // Isolate concurrent attempts and abandoned downloads from one another.
             string dir = Path.Combine(Path.GetTempPath(), "VoiceInputUpdate", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             string newExe = Path.Combine(dir, AssetName);

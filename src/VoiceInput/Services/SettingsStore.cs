@@ -120,7 +120,8 @@ public sealed class SettingsStore
             if (File.Exists(_filePath))
             {
                 File.Replace(temp, _filePath, backup);
-                try { File.Delete(backup); } catch { /* A leftover backup is harmless. */ }
+                try { File.Delete(backup); }
+                catch (Exception ex) { Log.Write($"Settings backup cleanup failed: {ex.Message}"); }
             }
             else
             {
