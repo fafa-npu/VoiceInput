@@ -700,14 +700,17 @@ public sealed class AppController : IDisposable
             () => _settings.DiagnosticLogging = !_settings.DiagnosticLogging, _settings.DiagnosticLogging);
         menu.Items.Add(diag);
 
-        var update = new WinForms.ToolStripMenuItem(
-            _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
-        update.Click += (_, _) =>
+        if (UpdateService.UpdatesEnabled)
         {
-            if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
-            else PromptAndApplyUpdate(_availableUpdateTag);
-        };
-        menu.Items.Add(update);
+            var update = new WinForms.ToolStripMenuItem(
+                _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
+            update.Click += (_, _) =>
+            {
+                if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
+                else PromptAndApplyUpdate(_availableUpdateTag);
+            };
+            menu.Items.Add(update);
+        }
 
         menu.Items.Add(new WinForms.ToolStripSeparator());
 

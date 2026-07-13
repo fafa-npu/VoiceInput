@@ -5,6 +5,10 @@ namespace VoiceInput.Tests;
 public sealed class UpdateServiceTests
 {
     [Fact]
+    public void UnsignedDevelopmentBuildHidesUpdateControls() =>
+        Assert.False(UpdateService.UpdatesEnabled);
+
+    [Fact]
     public async Task UnsignedDevelopmentBuildReportsUpdatesDisabled()
     {
         Assert.True(string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256));
