@@ -700,17 +700,14 @@ public sealed class AppController : IDisposable
             () => _settings.DiagnosticLogging = !_settings.DiagnosticLogging, _settings.DiagnosticLogging);
         menu.Items.Add(diag);
 
-        if (UpdateService.UpdatesEnabled)
+        var update = new WinForms.ToolStripMenuItem(
+            _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
+        update.Click += (_, _) =>
         {
-            var update = new WinForms.ToolStripMenuItem(
-                _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
-            update.Click += (_, _) =>
-            {
-                if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
-                else PromptAndApplyUpdate(_availableUpdateTag);
-            };
-            menu.Items.Add(update);
-        }
+            if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
+            else PromptAndApplyUpdate(_availableUpdateTag);
+        };
+        menu.Items.Add(update);
 
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
@@ -771,8 +768,7 @@ public sealed class AppController : IDisposable
                     break;
                 case UpdateService.CheckOutcome.UpdatesDisabled:
                     if (!silent)
-                        Notify("Updates unavailable",
-                            "This development build is not signed by a pinned publisher. Install an official release to enable updates.");
+                        OpenUri($"https://{UpdateService.Host}/{UpdateService.Repo}/releases/latest");
                     break;
             }
         });

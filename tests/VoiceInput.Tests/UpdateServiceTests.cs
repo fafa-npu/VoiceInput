@@ -5,8 +5,8 @@ namespace VoiceInput.Tests;
 public sealed class UpdateServiceTests
 {
     [Fact]
-    public void UnsignedDevelopmentBuildHidesUpdateControls() =>
-        Assert.False(UpdateService.UpdatesEnabled);
+    public void UnsignedDevelopmentBuildDisablesAutomaticUpdates() =>
+        Assert.False(UpdateService.AutomaticUpdatesEnabled);
 
     [Fact]
     public async Task UnsignedDevelopmentBuildReportsUpdatesDisabled()
