@@ -29,6 +29,7 @@ public sealed class AppController : IDisposable
     private readonly UpdateService _updater = new();
     private string? _availableUpdateTag;
     private string? _availableAssetUrl;
+    private string? _availableAssetSha256;
 
     private OverlayWindow? _overlay;
     private WinForms.NotifyIcon? _tray;
@@ -753,11 +754,14 @@ public sealed class AppController : IDisposable
                 case UpdateService.CheckOutcome.UpdateAvailable:
                     _availableUpdateTag = result.LatestTag;
                     _availableAssetUrl = result.AssetApiUrl;
+                    _availableAssetSha256 = result.AssetSha256;
                     Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
                     RebuildMenu();
                     break;
                 case UpdateService.CheckOutcome.UpToDate:
                     _availableUpdateTag = null;
+                    _availableAssetUrl = null;
+                    _availableAssetSha256 = null;
                     if (!silent) Notify("Up to date", $"You're on the latest version (v{UpdateService.CurrentVersion}).");
                     RebuildMenu();
                     break;
@@ -766,19 +770,16 @@ public sealed class AppController : IDisposable
                         Notify("Update check failed",
                             $"Couldn't reach GitHub Releases for {UpdateService.Repo}. Check your connection and try again.");
                     break;
-                case UpdateService.CheckOutcome.UpdatesDisabled:
-                    if (!silent)
-                        OpenUri($"https://{UpdateService.Host}/{UpdateService.Repo}/releases/latest");
-                    break;
             }
         });
     }
 
     private void PromptAndApplyUpdate(string tag)
     {
-        if (_availableAssetUrl is null)
+        if (_availableAssetUrl is null ||
+            !UpdateService.UsesPinnedPublisherVerification && _availableAssetSha256 is null)
         {
-            Notify("Update unavailable", $"{tag} has no downloadable VoiceInput.exe asset.");
+            Notify("Update unavailable", $"{tag} has no verifiable VoiceInput.exe asset.");
             return;
         }
 
@@ -793,7 +794,8 @@ public sealed class AppController : IDisposable
 
     private async Task ApplyUpdateAsync(string tag)
     {
-        bool ok = _availableAssetUrl is not null && await _updater.DownloadAndApplyAsync(_availableAssetUrl);
+        bool ok = _availableAssetUrl is not null &&
+            await _updater.DownloadAndApplyAsync(_availableAssetUrl, _availableAssetSha256);
         _ = _ui.BeginInvoke(() =>
         {
             if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches

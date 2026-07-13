@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using VoiceInput.Services;
 
 namespace VoiceInput.Tests;
@@ -5,16 +7,24 @@ namespace VoiceInput.Tests;
 public sealed class UpdateServiceTests
 {
     [Fact]
-    public void UnsignedDevelopmentBuildDisablesAutomaticUpdates() =>
-        Assert.False(UpdateService.AutomaticUpdatesEnabled);
+    public void UnsignedDevelopmentBuildUsesReleaseDigestVerification() =>
+        Assert.False(UpdateService.UsesPinnedPublisherVerification);
 
     [Fact]
-    public async Task UnsignedDevelopmentBuildReportsUpdatesDisabled()
+    public void ParsesGitHubReleaseSha256Digest()
     {
-        Assert.True(string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256));
+        string hash = new('A', 64);
 
-        var result = await new UpdateService().CheckAsync();
+        Assert.Equal(hash, UpdateService.ParseSha256Digest($"sha256:{hash}"));
+        Assert.Null(UpdateService.ParseSha256Digest($"md5:{hash}"));
+    }
 
-        Assert.Equal(UpdateService.CheckOutcome.UpdatesDisabled, result.Outcome);
+    [Fact]
+    public void AcceptsOnlyMatchingReleaseSha256()
+    {
+        byte[] actual = SHA256.HashData(Encoding.UTF8.GetBytes("VoiceInput release"));
+
+        Assert.True(UpdateService.MatchesSha256(actual, Convert.ToHexString(actual)));
+        Assert.False(UpdateService.MatchesSha256(actual, new string('0', 64)));
     }
 }

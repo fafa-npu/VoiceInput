@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace VoiceInput.Services;
@@ -27,18 +28,20 @@ public sealed class UpdateService
         }
     }
 
-    public enum CheckOutcome { UpToDate, UpdateAvailable, UpdatesDisabled, CheckFailed }
+    public enum CheckOutcome { UpToDate, UpdateAvailable, CheckFailed }
 
-    public sealed record CheckResult(CheckOutcome Outcome, string? LatestTag, Version? Latest, string? AssetApiUrl);
+    public sealed record CheckResult(
+        CheckOutcome Outcome,
+        string? LatestTag,
+        Version? Latest,
+        string? AssetApiUrl,
+        string? AssetSha256 = null);
 
-    public static bool AutomaticUpdatesEnabled =>
+    public static bool UsesPinnedPublisherVerification =>
         !string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256);
 
     public async Task<CheckResult> CheckAsync()
     {
-        // Unsigned development builds intentionally have no publisher pin and must never offer updates.
-        if (!AutomaticUpdatesEnabled)
-            return new CheckResult(CheckOutcome.UpdatesDisabled, null, null, null);
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
         try
@@ -55,6 +58,7 @@ public sealed class UpdateService
             if (latest is null) return new CheckResult(CheckOutcome.CheckFailed, tag, null, null);
 
             string? assetUrl = null;
+            string? assetSha256 = null;
             if (root.TryGetProperty("assets", out var assets))
             {
                 foreach (var a in assets.EnumerateArray())
@@ -62,13 +66,15 @@ public sealed class UpdateService
                     if (a.GetProperty("name").GetString() == AssetName)
                     {
                         assetUrl = a.GetProperty("url").GetString();
+                        if (a.TryGetProperty("digest", out var digest))
+                            assetSha256 = ParseSha256Digest(digest.GetString());
                         break;
                     }
                 }
             }
 
             var outcome = latest > CurrentVersion ? CheckOutcome.UpdateAvailable : CheckOutcome.UpToDate;
-            return new CheckResult(outcome, tag, latest, assetUrl);
+            return new CheckResult(outcome, tag, latest, assetUrl, assetSha256);
         }
         catch
         {
@@ -81,7 +87,7 @@ public sealed class UpdateService
     /// this process to exit, replaces the running exe in place, and relaunches it. Returns false on
     /// any failure (nothing is changed and the app keeps running).
     /// </summary>
-    public async Task<bool> DownloadAndApplyAsync(string assetApiUrl)
+    public async Task<bool> DownloadAndApplyAsync(string assetApiUrl, string? expectedSha256)
     {
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
@@ -103,7 +109,17 @@ public sealed class UpdateService
                 await resp.Content.CopyToAsync(fs);
             }
             if (new FileInfo(newExe).Length < 1_000_000) return false;   // sanity: real exe is ~80 MB
-            if (!AuthenticodeVerifier.VerifyPinnedPublisher(newExe))
+            bool verified;
+            if (UsesPinnedPublisherVerification)
+            {
+                verified = AuthenticodeVerifier.VerifyPinnedPublisher(newExe);
+            }
+            else
+            {
+                await using var stream = File.OpenRead(newExe);
+                verified = MatchesSha256(await SHA256.HashDataAsync(stream), expectedSha256);
+            }
+            if (!verified)
             {
                 Directory.Delete(dir, recursive: true);
                 return false;
@@ -200,6 +216,27 @@ public sealed class UpdateService
         if (string.IsNullOrWhiteSpace(tag)) return null;
         var t = tag.TrimStart('v', 'V').Trim();
         return Version.TryParse(t, out var v) ? new Version(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build) : null;
+    }
+
+    internal static string? ParseSha256Digest(string? digest)
+    {
+        const string prefix = "sha256:";
+        if (digest is null || !digest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        string hash = digest[prefix.Length..];
+        return hash.Length == 64 && hash.All(Uri.IsHexDigit) ? hash.ToUpperInvariant() : null;
+    }
+
+    internal static bool MatchesSha256(ReadOnlySpan<byte> actualHash, string? expectedSha256)
+    {
+        if (actualHash.Length != SHA256.HashSizeInBytes || expectedSha256?.Length != 64) return false;
+        try
+        {
+            return CryptographicOperations.FixedTimeEquals(actualHash, Convert.FromHexString(expectedSha256));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Reuses an existing github.com `gh` login for a higher rate limit; null if unavailable
