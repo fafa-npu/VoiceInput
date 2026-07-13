@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace VoiceInput.Services;
 
@@ -18,23 +20,43 @@ public sealed class CorrectionTracker
 
     private string? _raw;        // raw recognizer output (pre-refine)
     private string? _injected;   // what we actually typed into the box (refined, or raw if no LLM)
+    private TextInjector.Target? _target;
+    private DateTimeOffset _expiresAt;
+    private const int MaxEntries = 100;
+    private const int MaxTextLength = 1000;
+    private static readonly TimeSpan CaptureLifetime = TimeSpan.FromMinutes(2);
+    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("VoiceInput.corrections.v2");
 
-    public void Arm(string raw, string injected) { _raw = raw; _injected = injected; }
+    public void Arm(string raw, string injected, TextInjector.Target target)
+    {
+        _raw = Limit(raw);
+        _injected = Limit(injected);
+        _target = target;
+        _expiresAt = DateTimeOffset.UtcNow.Add(CaptureLifetime);
+    }
 
-    public async Task CaptureAsync(ContextReader reader)
+    public async Task CaptureAsync(ContextReader reader, TextInjector injector)
     {
         var raw = _raw;
         var injected = _injected;
+        var target = _target;
         _raw = _injected = null;   // one-shot
-        if (string.IsNullOrWhiteSpace(injected)) return;
+        _target = null;
+        if (string.IsNullOrWhiteSpace(injected) || target is null ||
+            DateTimeOffset.UtcNow > _expiresAt || !injector.IsCurrentTarget(target)) return;
 
-        string? edited = (await reader.TryReadFocusedValueAsync())?.Trim();
+        var focusedValue = await reader.TryReadFocusedValueAsync();
+        if (!injector.IsCurrentTarget(target)) return;
+
+        string? edited = Limit(focusedValue?.Trim());
         if (string.IsNullOrWhiteSpace(edited) || edited == injected) return;
 
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-            File.AppendAllText(FilePath, JsonSerializer.Serialize(new Pair(raw ?? string.Empty, injected, edited)) + Environment.NewLine);
+            var pairs = LoadPairs();
+            pairs.Add((raw ?? string.Empty, injected, edited));
+            WritePairs(pairs.TakeLast(MaxEntries));
             Log.Write($"correction captured (raw {raw?.Length ?? 0}, injected {injected.Length} -> edited {edited.Length} chars)");
         }
         catch { }
@@ -46,18 +68,52 @@ public sealed class CorrectionTracker
         try
         {
             if (!File.Exists(FilePath)) return list;
+            bool legacyPlaintext = false;
             foreach (var line in File.ReadAllLines(FilePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                var p = JsonSerializer.Deserialize<Pair>(line);
+                Pair? p;
+                try
+                {
+                    p = JsonSerializer.Deserialize<Pair>(Unprotect(line));
+                }
+                catch
+                {
+                    p = JsonSerializer.Deserialize<Pair>(line);
+                    legacyPlaintext = true;
+                }
                 if (p is { r.Length: > 0, c.Length: > 0 }) list.Add((p.raw ?? string.Empty, p.r, p.c));
             }
+            if (legacyPlaintext) WritePairs(list.TakeLast(MaxEntries));
         }
         catch { }
         return list;
     }
 
     public void Clear() { try { if (File.Exists(FilePath)) File.Delete(FilePath); } catch { } }
+
+    private static void WritePairs(IEnumerable<(string Raw, string Refined, string Edited)> pairs)
+    {
+        var lines = pairs.Select(p => Protect(JsonSerializer.Serialize(new Pair(p.Raw, p.Refined, p.Edited))));
+        string temp = FilePath + ".tmp";
+        File.WriteAllLines(temp, lines);
+        File.Move(temp, FilePath, overwrite: true);
+    }
+
+    private static string Protect(string plaintext)
+    {
+        byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(plaintext), Entropy, DataProtectionScope.CurrentUser);
+        return Convert.ToBase64String(protectedBytes);
+    }
+
+    private static string Unprotect(string cipher)
+    {
+        byte[] bytes = ProtectedData.Unprotect(Convert.FromBase64String(cipher), Entropy, DataProtectionScope.CurrentUser);
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    private static string? Limit(string? value) =>
+        value is null || value.Length <= MaxTextLength ? value : value[..MaxTextLength];
 
     private sealed record Pair(string? raw, string r, string c);
 }

@@ -51,7 +51,13 @@ public sealed class LlmRefiner
                 ? text
                 : $"[CONTEXT — surrounding text in the user's current app/terminal, reference only; do NOT output it]:\n{context}\n\n[DICTATION to correct]:\n{text}";
             string content = await ChatAsync(settings, BuildPrompt(settings), userContent, ct);
-            return string.IsNullOrWhiteSpace(content) ? text : content.Trim();
+            content = content.Trim();
+            if (!RefinementGuard.IsSafe(text, content))
+            {
+                Log.Write("LLM refine output rejected by safety guard.");
+                return text;
+            }
+            return content;
         }
         catch
         {

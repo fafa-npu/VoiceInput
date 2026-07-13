@@ -13,13 +13,22 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class SettingsStore
 {
-    private static readonly string Dir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceInput");
+    private readonly string _dir;
+    private readonly string _filePath;
 
-    private static readonly string FilePath = Path.Combine(Dir, "settings.json");
+    public SettingsStore() : this(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VoiceInput", "settings.json"))
+    {
+    }
+
+    internal SettingsStore(string filePath)
+    {
+        _filePath = filePath;
+        _dir = Path.GetDirectoryName(filePath) ?? throw new ArgumentException("Settings path must include a directory.", nameof(filePath));
+    }
 
     /// <summary>False on a fresh machine (no settings saved yet) — used to drive first-run onboarding.</summary>
-    public bool Exists => File.Exists(FilePath);
+    public bool Exists => File.Exists(_filePath);
 
     // App-specific entropy mixed into DPAPI so another process running as the same
     // user can't trivially unprotect the blob without also knowing this value.
@@ -35,10 +44,10 @@ public sealed class SettingsStore
     {
         try
         {
-            if (!File.Exists(FilePath))
+            if (!File.Exists(_filePath))
                 return new AppSettings();
 
-            var dto = JsonSerializer.Deserialize<PersistedSettings>(File.ReadAllText(FilePath), JsonOptions);
+            var dto = JsonSerializer.Deserialize<PersistedSettings>(File.ReadAllText(_filePath), JsonOptions);
             if (dto is null)
                 return new AppSettings();
 
@@ -77,7 +86,7 @@ public sealed class SettingsStore
 
     public void Save(AppSettings s)
     {
-        Directory.CreateDirectory(Dir);
+        Directory.CreateDirectory(_dir);
         var dto = new PersistedSettings
         {
             Language = s.Language,
@@ -103,7 +112,26 @@ public sealed class SettingsStore
             DiagnosticLogging = s.DiagnosticLogging,
             UseContext = s.UseContext,
         };
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(dto, JsonOptions));
+        string temp = _filePath + ".tmp";
+        string backup = _filePath + ".backup";
+        try
+        {
+            File.WriteAllText(temp, JsonSerializer.Serialize(dto, JsonOptions));
+            if (File.Exists(_filePath))
+            {
+                File.Replace(temp, _filePath, backup);
+                try { File.Delete(backup); }
+                catch (Exception ex) { Log.Write($"Settings backup cleanup failed: {ex.Message}"); }
+            }
+            else
+            {
+                File.Move(temp, _filePath);
+            }
+        }
+        finally
+        {
+            try { File.Delete(temp); } catch { /* Preserve the original save exception. */ }
+        }
     }
 
     private static string Protect(string? plaintext)

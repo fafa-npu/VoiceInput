@@ -15,6 +15,9 @@ public sealed class WindowsSpeechEngine : ISpeechEngine
     public bool NeedsAudioFeed => false;
     public event Action<string>? Partial;
     public event Action<string>? Final;
+#pragma warning disable CS0067
+    public event Action<SpeechFault>? Fault;
+#pragma warning restore CS0067
 
     private SpeechRecognizer? _rec;
 

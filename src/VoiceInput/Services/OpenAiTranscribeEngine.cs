@@ -29,12 +29,13 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     private string _language = string.Empty;
     private volatile bool _closed;
     private volatile bool _canceled;   // set on abort/chord-cancel: discard, skip the network call
+    private CancellationTokenSource? _requestCts;
 
     /// <summary>Raised when acquiring the Entra token fails/times out (expired sign-in) so the app
     /// can notify the user and re-authenticate in the background, off the dictation lock.</summary>
     public event Action? AuthExpired;
 
-    private OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
+    internal OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
     {
         _url = url;
         _applyAuth = applyAuth;
@@ -72,6 +73,7 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     public event Action<string>? Partial;
 #pragma warning restore CS0067
     public event Action<string>? Final;
+    public event Action<SpeechFault>? Fault;
 
     public Task StartAsync(string language)
     {
@@ -82,7 +84,14 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         return Task.CompletedTask;
     }
 
-    public void Cancel() => _canceled = true;
+    public void Cancel()
+    {
+        lock (_lock)
+        {
+            _canceled = true;
+            _requestCts?.Cancel();
+        }
+    }
 
     public void Feed(byte[] pcm16kMono)
     {
@@ -98,6 +107,13 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         byte[] pcm;
         lock (_lock) { pcm = _buffer.ToArray(); }
         if (pcm.Length == 0) return;
+
+        var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
+        lock (_lock)
+        {
+            _requestCts = requestCts;
+            if (_canceled) requestCts.Cancel();
+        }
 
         try
         {
@@ -117,22 +133,31 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
             // StopAsync (which holds the dictation lock) can never wedge, and hand re-auth to the app.
             try
             {
-                using var authCts = new CancellationTokenSource(TimeSpan.FromSeconds(AuthTimeoutSec));
+                using var authCts = CancellationTokenSource.CreateLinkedTokenSource(requestCts.Token);
+                authCts.CancelAfter(TimeSpan.FromSeconds(AuthTimeoutSec));
                 await _applyAuth(req, authCts.Token);
+            }
+            catch (OperationCanceledException) when (requestCts.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception authEx)
             {
                 Log.Write($"OpenAiTranscribeEngine token acquisition failed ({authEx.GetType().Name}); requesting re-auth.");
+                Fault?.Invoke(new(SpeechFaultKind.Authentication,
+                    "Azure sign-in failed or expired. Sign in again from Settings.", authEx.Message));
                 AuthExpired?.Invoke();
                 return;
             }
 
-            using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
-            using var resp = await Http.SendAsync(req, httpCts.Token);
-            string json = await resp.Content.ReadAsStringAsync();
+            using var resp = await Http.SendAsync(req, requestCts.Token);
+            string json = await resp.Content.ReadAsStringAsync(requestCts.Token);
             if (!resp.IsSuccessStatusCode)
             {
                 Log.Write($"OpenAiTranscribeEngine HTTP {(int)resp.StatusCode}: {Truncate(json, 300)}");
+                Fault?.Invoke(resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+                    ? new(SpeechFaultKind.Quota, "Transcription is rate-limited or out of quota.", Truncate(json, 300))
+                    : new(SpeechFaultKind.Service, $"Transcription service returned HTTP {(int)resp.StatusCode}.", Truncate(json, 300)));
                 return;
             }
 
@@ -143,11 +168,25 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         }
         catch (OperationCanceledException)
         {
-            Log.Write("OpenAiTranscribeEngine: transcription timed out.");
+            if (!_canceled)
+            {
+                Log.Write("OpenAiTranscribeEngine: transcription timed out.");
+                Fault?.Invoke(new(SpeechFaultKind.Timeout, "Transcription timed out. Your recording was not inserted."));
+            }
         }
         catch (Exception ex)
         {
             Log.Error("OpenAiTranscribeEngine.StopAsync", ex);
+            Fault?.Invoke(new(SpeechFaultKind.Network, "Transcription failed. Check your network and try again.", ex.Message));
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                if (ReferenceEquals(_requestCts, requestCts))
+                    _requestCts = null;
+            }
+            requestCts.Dispose();
         }
     }
 

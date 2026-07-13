@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-dotnet@v5.0.0
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore src/VoiceInput/VoiceInput.csproj
+      - run: dotnet build src/VoiceInput/VoiceInput.csproj -c Release --no-restore
+      - run: dotnet test tests/VoiceInput.Tests/VoiceInput.Tests.csproj -c Release

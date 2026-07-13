@@ -27,12 +27,15 @@ public sealed class UpdateService
         }
     }
 
-    public enum CheckOutcome { UpToDate, UpdateAvailable, CheckFailed }
+    public enum CheckOutcome { UpToDate, UpdateAvailable, UpdatesDisabled, CheckFailed }
 
     public sealed record CheckResult(CheckOutcome Outcome, string? LatestTag, Version? Latest, string? AssetApiUrl);
 
     public async Task<CheckResult> CheckAsync()
     {
+        // Unsigned development builds intentionally have no publisher pin and must never offer updates.
+        if (string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256))
+            return new CheckResult(CheckOutcome.UpdatesDisabled, null, null, null);
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
 
         try
@@ -81,7 +84,8 @@ public sealed class UpdateService
 
         try
         {
-            string dir = Path.Combine(Path.GetTempPath(), "VoiceInputUpdate");
+            // Isolate concurrent attempts and abandoned downloads from one another.
+            string dir = Path.Combine(Path.GetTempPath(), "VoiceInputUpdate", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             string newExe = Path.Combine(dir, AssetName);
 
@@ -96,18 +100,39 @@ public sealed class UpdateService
                 await resp.Content.CopyToAsync(fs);
             }
             if (new FileInfo(newExe).Length < 1_000_000) return false;   // sanity: real exe is ~80 MB
+            if (!AuthenticodeVerifier.VerifyPinnedPublisher(newExe))
+            {
+                Directory.Delete(dir, recursive: true);
+                return false;
+            }
 
             string target = Environment.ProcessPath!;
             int pid = Environment.ProcessId;
-            string ps = $"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 600; " +
-                        $"Copy-Item -LiteralPath '{newExe}' -Destination '{target}' -Force; " +
-                        $"Start-Process -FilePath '{target}'";
-            Process.Start(new ProcessStartInfo("powershell.exe",
-                $"-NoProfile -WindowStyle Hidden -Command \"{ps}\"")
+            string helper = Path.Combine(dir, "apply-update.ps1");
+            await File.WriteAllTextAsync(helper, UpdateHelperScript);
+            var psi = new ProcessStartInfo("powershell.exe")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-            });
+            };
+            psi.ArgumentList.Add("-NoProfile");
+            psi.ArgumentList.Add("-NonInteractive");
+            psi.ArgumentList.Add("-WindowStyle");
+            psi.ArgumentList.Add("Hidden");
+            psi.ArgumentList.Add("-File");
+            psi.ArgumentList.Add(helper);
+            psi.ArgumentList.Add("-NewExe");
+            psi.ArgumentList.Add(newExe);
+            psi.ArgumentList.Add("-Target");
+            psi.ArgumentList.Add(target);
+            psi.ArgumentList.Add("-ProcessId");
+            psi.ArgumentList.Add(pid.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (Process.Start(psi) is null)
+            {
+                Log.Write("Update helper could not be started.");
+                Directory.Delete(dir, recursive: true);
+                return false;
+            }
             return true;
         }
         catch
@@ -115,6 +140,49 @@ public sealed class UpdateService
             return false;
         }
     }
+
+    private const string UpdateHelperScript = """
+        param(
+            [Parameter(Mandatory=$true)][string]$NewExe,
+            [Parameter(Mandatory=$true)][string]$Target,
+            [Parameter(Mandatory=$true)][int]$ProcessId
+        )
+        $ErrorActionPreference = 'Stop'
+        $tempTarget = "$Target.new"
+        $backup = "$Target.backup"
+        Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 600
+        try {
+            Copy-Item -LiteralPath $NewExe -Destination $tempTarget -Force
+            if ((Get-Item -LiteralPath $tempTarget).Length -lt 1000000) {
+                throw 'Downloaded executable is incomplete.'
+            }
+            if (Test-Path -LiteralPath $Target) {
+                [System.IO.File]::Replace($tempTarget, $Target, $backup, $true)
+            } else {
+                [System.IO.File]::Move($tempTarget, $Target)
+            }
+            $process = Start-Process -FilePath $Target -PassThru
+            Start-Sleep -Seconds 3
+            if ($process.HasExited) {
+                throw "Updated application exited during startup ($($process.ExitCode))."
+            }
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        } catch {
+            if (Test-Path -LiteralPath $backup) {
+                if (Test-Path -LiteralPath $Target) {
+                    [System.IO.File]::Replace($backup, $Target, $null, $true)
+                } else {
+                    [System.IO.File]::Move($backup, $Target)
+                }
+                Start-Process -FilePath $Target
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempTarget -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+        }
+        """;
 
     private static void AddHeaders(HttpRequestMessage req, string? token, string accept)
     {

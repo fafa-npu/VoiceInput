@@ -30,6 +30,17 @@
     <PackageReference Include="Azure.Identity" Version="1.17.2" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(UpdateSignerCertificateSha256)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UpdateSignerCertificateSha256</_Parameter1>
+      <_Parameter2>$(UpdateSignerCertificateSha256)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="VoiceInput.Tests" />
+  </ItemGroup>
+
   <!-- This is a WPF app; WinForms is only used (fully qualified) for the tray NotifyIcon.
        Drop the WinForms/Drawing implicit global usings so names like Application/Brush/Color
        resolve unambiguously to their WPF equivalents. -->

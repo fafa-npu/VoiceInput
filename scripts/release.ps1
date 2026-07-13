@@ -11,7 +11,10 @@
   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version v0.1.1
 #>
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$Version)   # e.g. v0.1.1
+param(
+    [Parameter(Mandatory = $true)][string]$Version,
+    [Parameter(Mandatory = $true)][string]$SignPfx
+)
 
 $ErrorActionPreference = 'Stop'
 $Repo    = 'fafa-npu/VoiceInput'
@@ -24,6 +27,13 @@ $proj   = Join-Path $repoRoot 'src\VoiceInput\VoiceInput.csproj'
 $pubDir = Join-Path $repoRoot 'publish'
 $exe    = Join-Path $pubDir 'VoiceInput.exe'
 $num    = $Version.TrimStart('v', 'V')
+if (-not (Test-Path -LiteralPath $SignPfx)) { throw "Signing certificate not found: $SignPfx" }
+$signPassword = Read-Host -Prompt 'PFX password' -AsSecureString
+$certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+    $SignPfx, $signPassword,
+    [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+$signerSha256 = $certificate.GetCertHashString(
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256)
 
 $token = gh auth token --hostname $Site
 if (-not $token) { throw "No token. Run once: gh auth login --hostname $Site" }
@@ -33,12 +43,15 @@ $H = @{ Authorization = "token $token"; Accept = 'application/vnd.github+json' }
 Write-Host "Building $Version..." -ForegroundColor Cyan
 $pubArgs = @(
     'publish', $proj, '-c', 'Release', '-r', 'win-x64', "-p:Version=$num",
+    "-p:UpdateSignerCertificateSha256=$signerSha256",
     '-p:SelfContained=true', '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true',
     '-o', $pubDir
 )
 & dotnet @pubArgs | Out-Null
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw 'dotnet publish failed.' }
+$signature = Set-AuthenticodeSignature -FilePath $exe -Certificate $certificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+if ($signature.Status -ne 'Valid') { throw "Authenticode signing failed: $($signature.StatusMessage)" }
 
 # Create the (published) release, or reuse it if the tag already exists.
 $body = @{
