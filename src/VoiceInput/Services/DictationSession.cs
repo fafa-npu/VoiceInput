@@ -35,6 +35,12 @@ internal sealed class DictationSession : IDisposable
 
     public void MoveTo(DictationSessionState state) => State = state;
 
+    public void CompleteProcessing()
+    {
+        if (State is DictationSessionState.Transcribing or DictationSessionState.Refining or DictationSessionState.Injecting)
+            State = DictationSessionState.Idle;
+    }
+
     public void Cancel()
     {
         _cts.Cancel();

@@ -36,7 +36,7 @@ public sealed class TextInjector
         var inputs = new INPUT[2];
         for (int i = 0; i < text.Length; i++)
         {
-            if (GetForegroundWindow() != target.Window || i % 32 == 0 && !MatchesCurrentTarget(target))
+            if (!MatchesCurrentTarget(target))
                 return Task.FromResult(new Result(false, i, "The focused window or input control changed during insertion."));
             inputs[0] = UnicodeKey(text[i], up: false);
             inputs[1] = UnicodeKey(text[i], up: true);
@@ -61,10 +61,17 @@ public sealed class TextInjector
         if (processId != target.ProcessId) return false;
         var className = new StringBuilder(256);
         _ = GetClassName(window, className, className.Capacity);
-        return className.ToString() == target.WindowClass &&
-            FocusedControlWindow(threadId) == target.FocusedControl &&
-            FocusedControlId() == target.ControlId;
+        IntPtr focusedControl = FocusedControlWindow(threadId);
+        string controlId = FocusedControlId();
+        return HasUsableControlIdentity(target.FocusedControl, target.ControlId) &&
+            HasUsableControlIdentity(focusedControl, controlId) &&
+            className.ToString() == target.WindowClass &&
+            focusedControl == target.FocusedControl &&
+            controlId == target.ControlId;
     }
+
+    internal static bool HasUsableControlIdentity(IntPtr focusedControl, string controlId) =>
+        focusedControl != IntPtr.Zero || !string.IsNullOrEmpty(controlId);
 
     private static IntPtr FocusedControlWindow(uint threadId)
     {

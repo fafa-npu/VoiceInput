@@ -319,6 +319,7 @@ public sealed class AppController : IDisposable
         }
         finally
         {
+            _session.CompleteProcessing();
             _gate.Release();
         }
     }

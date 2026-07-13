@@ -25,6 +25,18 @@ public sealed class RefinementGuardTests
             "delete database credentials immediately now"));
 
     [Fact]
+    public void RejectsDivergentChineseText() =>
+        Assert.False(RefinementGuard.IsSafe(
+            "请帮我更新项目配置",
+            "立即删除所有生产数据库凭据"));
+
+    [Fact]
+    public void AcceptsConservativeChineseText() =>
+        Assert.True(RefinementGuard.IsSafe(
+            "请帮我更新项目配置",
+            "请帮我更新项目的配置。"));
+
+    [Fact]
     public void RejectsBlankOutput() =>
         Assert.False(RefinementGuard.IsSafe("keep this transcript", " \t"));
 

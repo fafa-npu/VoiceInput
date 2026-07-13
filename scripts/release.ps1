@@ -13,8 +13,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [Parameter(Mandatory = $true)][string]$SignPfx,
-    [Parameter(Mandatory = $true)][string]$SignPassword
+    [Parameter(Mandatory = $true)][string]$SignPfx
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,8 +28,9 @@ $pubDir = Join-Path $repoRoot 'publish'
 $exe    = Join-Path $pubDir 'VoiceInput.exe'
 $num    = $Version.TrimStart('v', 'V')
 if (-not (Test-Path -LiteralPath $SignPfx)) { throw "Signing certificate not found: $SignPfx" }
+$signPassword = Read-Host -Prompt 'PFX password' -AsSecureString
 $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-    $SignPfx, $SignPassword,
+    $SignPfx, $signPassword,
     [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
 $signerSha256 = $certificate.GetCertHashString(
     [System.Security.Cryptography.HashAlgorithmName]::SHA256)
@@ -50,10 +50,8 @@ $pubArgs = @(
 )
 & dotnet @pubArgs | Out-Null
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $exe)) { throw 'dotnet publish failed.' }
-& signtool sign /fd SHA256 /tr 'http://timestamp.digicert.com' /td SHA256 /f $SignPfx /p $SignPassword $exe
-if ($LASTEXITCODE -ne 0) { throw 'Authenticode signing failed.' }
-& signtool verify /pa /tw $exe | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed.' }
+$signature = Set-AuthenticodeSignature -FilePath $exe -Certificate $certificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+if ($signature.Status -ne 'Valid') { throw "Authenticode signing failed: $($signature.StatusMessage)" }
 
 # Create the (published) release, or reuse it if the tag already exists.
 $body = @{

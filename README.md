@@ -96,7 +96,7 @@ Needs the **.NET 10 SDK**.
 ```bash
 make run        # run from source
 make install    # build + install to %LOCALAPPDATA% + auto-start + launch
-make release VERSION=vX.Y.Z SIGN_PFX=publisher.pfx SIGN_PWD=...  # signed release
+make release VERSION=vX.Y.Z SIGN_PFX=publisher.pfx  # prompts securely for the PFX password
 ```
 
 The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists.

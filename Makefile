@@ -6,7 +6,7 @@ CONFIG       := Release
 RID          := win-x64
 PUBLISH_DIR  := publish
 
-# Optional Authenticode signing for local publish. Public releases require a PFX + password:
+# Optional Authenticode signing for local publish:
 #   make publish SIGN_PFX=mycert.pfx SIGN_PWD=secret
 # or a cert subject name from the user store:
 #   make publish SIGN_SUBJECT="My Company"
@@ -61,5 +61,5 @@ install: publish
 # since older gh mishandles this instance's upload endpoint). The version is baked into the exe so
 # the in-app update check compares correctly. One-time: gh auth login --hostname $(GHE_HOST).
 release:
-	@test -n "$(SIGN_PFX)" -a -n "$(SIGN_PWD)" || (echo "release requires SIGN_PFX and SIGN_PWD" && exit 1)
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version $(VERSION) -SignPfx "$(SIGN_PFX)" -SignPassword "$(SIGN_PWD)"
+	@test -n "$(SIGN_PFX)" || (echo "release requires SIGN_PFX" && exit 1)
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version $(VERSION) -SignPfx "$(SIGN_PFX)"

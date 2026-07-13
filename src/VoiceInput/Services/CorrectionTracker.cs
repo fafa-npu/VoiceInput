@@ -45,7 +45,10 @@ public sealed class CorrectionTracker
         if (string.IsNullOrWhiteSpace(injected) || target is null ||
             DateTimeOffset.UtcNow > _expiresAt || !injector.IsCurrentTarget(target)) return;
 
-        string? edited = Limit((await reader.TryReadFocusedValueAsync())?.Trim());
+        var focusedValue = await reader.TryReadFocusedValueAsync();
+        if (!injector.IsCurrentTarget(target)) return;
+
+        string? edited = Limit(focusedValue?.Trim());
         if (string.IsNullOrWhiteSpace(edited) || edited == injected) return;
 
         try
