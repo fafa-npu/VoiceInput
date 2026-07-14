@@ -117,7 +117,7 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
         try
         {
-            byte[] wav = BuildWav(pcm, AudioCapture.TargetSampleRate);
+            byte[] wav = PcmWave.Wrap(pcm, AudioCapture.TargetSampleRate);
 
             using var form = new MultipartFormDataContent();
             var file = new ByteArrayContent(wav);
@@ -201,28 +201,4 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
-    /// <summary>Wrap raw 16-bit mono PCM in a minimal 44-byte WAV header.</summary>
-    private static byte[] BuildWav(byte[] pcm, int sampleRate)
-    {
-        const int bits = 16, channels = 1;
-        int byteRate = sampleRate * channels * bits / 8;
-        using var ms = new MemoryStream(44 + pcm.Length);
-        using var w = new BinaryWriter(ms);
-        w.Write("RIFF"u8.ToArray());
-        w.Write(36 + pcm.Length);
-        w.Write("WAVE"u8.ToArray());
-        w.Write("fmt "u8.ToArray());
-        w.Write(16);
-        w.Write((short)1);                       // PCM
-        w.Write((short)channels);
-        w.Write(sampleRate);
-        w.Write(byteRate);
-        w.Write((short)(channels * bits / 8));   // block align
-        w.Write((short)bits);
-        w.Write("data"u8.ToArray());
-        w.Write(pcm.Length);
-        w.Write(pcm);
-        w.Flush();
-        return ms.ToArray();
-    }
 }

@@ -56,6 +56,7 @@ public sealed class SettingsStore
                 Language = dto.Language,
                 PttKey = dto.PttKey,
                 Engine = dto.Engine,
+                FunAsrModelId = FunAsrModelCatalog.NormalizeId(dto.FunAsrModelId),
                 AzureRegion = dto.AzureRegion,
                 AzureKey = Unprotect(dto.AzureKeyEnc),
                 AzureAuthMode = dto.AzureAuthMode,
@@ -92,6 +93,7 @@ public sealed class SettingsStore
             Language = s.Language,
             PttKey = s.PttKey,
             Engine = s.Engine,
+            FunAsrModelId = FunAsrModelCatalog.NormalizeId(s.FunAsrModelId),
             AzureRegion = s.AzureRegion,
             AzureKeyEnc = Protect(s.AzureKey),
             AzureAuthMode = s.AzureAuthMode,
@@ -163,6 +165,7 @@ public sealed class SettingsStore
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
+        public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
         public string AzureRegion { get; set; } = "eastasia";
         public string AzureKeyEnc { get; set; } = string.Empty;
         public AzureAuthMode AzureAuthMode { get; set; } = AzureAuthMode.Key;

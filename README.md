@@ -31,10 +31,10 @@ layer** can be configured for:
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Three speech engines:** **Windows dictation** (no key; may use Microsoft's online speech service), **Azure Speech** (streaming,
-  low-latency zh-CN), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch — highest accuracy,
-  transcribes on release). Azure Speech and gpt-4o-transcribe each support **account-key** or
-  **Microsoft Entra ID** auth (interactive sign-in, cached so you sign in once).
+- **Four speech engines:** **Windows dictation** (may use Microsoft's online speech service),
+  **Azure Speech** (streaming), **gpt-4o-transcribe** via **Azure AI Foundry** (batch), and
+  **FunASR** with app-managed local GGUF models (batch). Azure Speech and gpt-4o-transcribe each
+  support **account-key** or **Microsoft Entra ID** auth.
 - **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
   minute between dictations, so back-to-back dictation is instant and the first words aren't lost to
   device cold-start. The mic is fully released when idle or paused.
@@ -56,7 +56,7 @@ layer** can be configured for:
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
 | **Context-aware refine** | Tray → **Use surrounding context (UIA)** (off by default; sends app text to the LLM) |
-| **Settings**             | Tray → **Settings…** (engine / Azure / LLM)                                          |
+| **Setup**                | Tray → **Settings…** (speech, local models, refinement, and app settings)             |
 
 ## Install
 
@@ -80,14 +80,34 @@ powershell -File "$env:LOCALAPPDATA\VoiceInput\uninstall.ps1" -Uninstall
 This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correction samples). Add
 `-KeepUserData` to retain it.
 
+## Local FunASR
+
+Open **Settings → FunASR** to download models on demand. **SenseVoiceSmall** is the default local
+model selection, but nothing is downloaded until you choose to install it.
+
+| Model | Download | Languages | Intended use |
+| --- | ---: | --- | --- |
+| [SenseVoiceSmall q8](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF) | 254 MB | English, Chinese, Japanese, Korean | Default balanced CPU model |
+| [Paraformer q8](https://huggingface.co/FunAudioLLM/Paraformer-GGUF) | 237 MB | English, Chinese | Faster Chinese/English dictation |
+| [Fun-ASR Nano q4](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF) | 954 MB | English, Chinese, Japanese | Difficult vocabulary and accents |
+
+The first model also downloads the official FunASR llama.cpp Windows x64 runtime (4.7 MB) and a
+shared FSMN-VAD model (1.7 MB). Downloads are resumable and SHA-256 verified before activation.
+The runtime and models live under `%LOCALAPPDATA%\VoiceInput\FunASR` and can be removed from Setup.
+
+FunASR runs as a hidden native child process. It does not require Python, PyTorch, Docker, or a
+local HTTP server, and it does not open a listening port. Recorded audio is written only to a
+temporary local WAV for the native batch command and deleted when transcription finishes. Local
+GGUF models in this release do not support Vietnamese; use one of the cloud engines for `vi-VN`.
+Model weights use the licenses linked from their Hugging Face model cards; the pinned artifacts in
+this release link to the [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0).
+
 ## Configuration
 
-Tray → **Settings…** for engine + auth and LLM. Each cloud engine offers **Key** or **Microsoft
-Entra ID** auth: Azure Speech needs key+region (Key) or endpoint+tenant (Entra); gpt-4o-transcribe
-needs the Foundry endpoint + deployment, with an API key (Key) or tenant (Entra). LLM refinement
-takes any OpenAI-compatible Base URL / Key / Model (default `gpt-4.1-mini`). To customize the refine
-prompt, set `LlmPrompt` in `%APPDATA%\VoiceInput\settings.json` (secret fields are DPAPI-encrypted
-per-user).
+Tray → **Settings…** opens the Setup Hub. Speech contains engine and cloud authentication settings;
+FunASR manages local models; Refinement contains the OpenAI-compatible Base URL, key, model, and
+custom prompt; App contains language, push-to-talk, privacy, startup, update, and logging controls.
+Secret fields are DPAPI-encrypted per Windows user in `%APPDATA%\VoiceInput\settings.json`.
 
 ## Build (developers)
 
@@ -97,6 +117,9 @@ Needs the **.NET 10 SDK**.
 make run        # run from source
 make install    # build + install to %LOCALAPPDATA% + auto-start + launch
 make release VERSION=vX.Y.Z SIGN_PFX=publisher.pfx  # prompts securely for the PFX password
+
+dotnet test tests/VoiceInput.Tests/VoiceInput.Tests.csproj
+dotnet build src/VoiceInput/VoiceInput.csproj -p:EnableWindowsTargeting=true
 ```
 
 The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists.
@@ -110,6 +133,8 @@ build time, atomically replaced, and rolled back if the new process does not sta
 - **gpt-4o-transcribe** is batch: it transcribes after you release (~0.5–2 s), so there are no live
   partials — but accuracy is highest (zh-CN homophones, tech terms). Needs an Azure AI Foundry
   resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).
+- **FunASR** is also batch and CPU-only in this release. Startup and recognition time depend on the
+  selected model, recording length, and the local CPU; no cloud fallback occurs after a local error.
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
 - UI Automation context is untrusted input. VoiceInput constrains refined output length, rejects

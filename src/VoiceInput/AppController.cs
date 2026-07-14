@@ -27,6 +27,11 @@ public sealed class AppController : IDisposable
     private readonly ContextReader _contextReader = new();
     private readonly CorrectionTracker _corrections = new();
     private readonly UpdateService _updater = new();
+    private readonly FunAsrRuntimeManager _funAsr = new();
+    private readonly object _funAsrInstallLock = new();
+    private CancellationTokenSource? _funAsrInstallCancellation;
+    private Task? _funAsrInstallTask;
+    private string? _funAsrInstallingModelId;
     private string? _availableUpdateTag;
     private string? _availableAssetUrl;
     private string? _availableAssetSha256;
@@ -470,6 +475,20 @@ public sealed class AppController : IDisposable
                 if (string.IsNullOrWhiteSpace(_settings.TranscribeModel))
                     throw new InvalidOperationException("Foundry transcription requires a Deployment in Settings.");
                 throw new InvalidOperationException("Foundry key authentication requires an API Key in Settings.");
+
+            case SpeechEngineKind.FunAsr:
+                FunAsrModelDefinition model = FunAsrModelCatalog.Get(_settings.FunAsrModelId);
+                if (!model.Supports(_settings.Language))
+                {
+                    throw new InvalidOperationException(
+                        $"{model.DisplayName} does not support {_settings.Language}. Choose a compatible model or language in Setup.");
+                }
+                if (!_funAsr.IsInstalled(model.Id))
+                {
+                    throw new InvalidOperationException(
+                        "Download the selected FunASR model in Setup before using it.");
+                }
+                return new FunAsrEngine(_funAsr.Resolve(model.Id));
         }
         return new WindowsSpeechEngine();
     }
@@ -595,10 +614,6 @@ public sealed class AppController : IDisposable
     {
         var menu = new WinForms.ContextMenuStrip();
 
-        var header = new WinForms.ToolStripMenuItem($"VoiceInput v{UpdateService.CurrentVersion}") { Enabled = false };
-        menu.Items.Add(header);
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-
         if (!string.IsNullOrEmpty(_pendingText))
         {
             var retry = new WinForms.ToolStripMenuItem("Retry pending text");
@@ -615,100 +630,20 @@ public sealed class AppController : IDisposable
         menu.Items.Add(pause);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
-        // Language
-        var lang = new WinForms.ToolStripMenuItem("Language");
-        foreach (var (code, display) in AppSettings.SupportedLanguages)
-        {
-            var item = new WinForms.ToolStripMenuItem(display) { Checked = _settings.Language == code };
-            item.Click += (_, _) => { _settings.Language = code; Persist(); RebuildMenu(); };
-            lang.DropDownItems.Add(item);
-        }
-        menu.Items.Add(lang);
-
-        // Engine
-        var engine = new WinForms.ToolStripMenuItem("Engine");
-        AddRadio(engine, "Windows (on-device)", _settings.Engine == SpeechEngineKind.Windows,
-            () => { _settings.Engine = SpeechEngineKind.Windows; Persist(); RebuildMenu(); });
-        AddRadio(engine, "Azure Speech", _settings.Engine == SpeechEngineKind.Azure,
-            () => { _settings.Engine = SpeechEngineKind.Azure; Persist(); RebuildMenu(); });
-        AddRadio(engine, "gpt-4o-transcribe (Foundry)", _settings.Engine == SpeechEngineKind.GptTranscribe,
-            () => { _settings.Engine = SpeechEngineKind.GptTranscribe; Persist(); RebuildMenu(); });
-        menu.Items.Add(engine);
-
-        // Push-to-talk key
-        var ptt = new WinForms.ToolStripMenuItem("Push-to-talk key");
-        foreach (var key in new[] { "RightCtrl", "LeftCtrl", "CapsLock", "RightAlt", "RightShift" })
-        {
-            string k = key;
-            AddRadio(ptt, PttDisplay(k), _settings.PttKey == k, () =>
-            {
-                _settings.PttKey = k;
-                _hook.SetPttKey(k);
-                if (_tray is not null) _tray.Text = TrayTooltip();
-                Persist();
-                RebuildMenu();
-            });
-        }
-        menu.Items.Add(ptt);
-
-        // LLM refinement (enable toggle; full config lives in the top-level Settings window)
-        var llm = new WinForms.ToolStripMenuItem("LLM Refinement");
-        var enabled = new WinForms.ToolStripMenuItem("Enabled") { Checked = _settings.LlmEnabled };
-        enabled.Click += (_, _) => ToggleSensitiveSetting(
-            "Enable cloud LLM refinement?",
-            "Dictated text will be sent to the configured LLM endpoint. If context is enabled, surrounding app text is sent too.",
-            () => _settings.LlmEnabled = !_settings.LlmEnabled, _settings.LlmEnabled);
-        llm.DropDownItems.Add(enabled);
-        menu.Items.Add(llm);
-
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-
-        // Top-level Settings entry — holds Speech Engine (Azure key/region) AND LLM config.
-        var settings = new WinForms.ToolStripMenuItem("Settings…  (engine / Azure / LLM)");
-        settings.Click += (_, _) => OpenSettings();
-        menu.Items.Add(settings);
-
-        var openLog = new WinForms.ToolStripMenuItem("Open log");
-        openLog.Click += (_, _) => OpenUri(Log.FilePath);
-        menu.Items.Add(openLog);
-
-        var autostart = new WinForms.ToolStripMenuItem("Start at login") { Checked = IsAutoStartEnabled() };
-        autostart.Click += (_, _) => { SetAutoStart(!IsAutoStartEnabled()); RebuildMenu(); };
-        menu.Items.Add(autostart);
-
-        var ctx = new WinForms.ToolStripMenuItem("Use surrounding context (UIA)") { Checked = _settings.UseContext };
-        ctx.Click += (_, _) => ToggleSensitiveSetting(
-            "Enable surrounding context?",
-            "VoiceInput will read text from the focused app with UI Automation and send it to your configured LLM.",
-            () => _settings.UseContext = !_settings.UseContext, _settings.UseContext);
-        menu.Items.Add(ctx);
-
-        var learn = new WinForms.ToolStripMenuItem("Learn from my edits") { Checked = _settings.LearnFromEdits };
-        learn.Click += (_, _) => ToggleSensitiveSetting(
-            "Enable edit learning?",
-            "For up to two minutes after a successful insertion, Enter may capture the same input control. Up to 100 encrypted correction samples are stored locally.",
-            () => _settings.LearnFromEdits = !_settings.LearnFromEdits, _settings.LearnFromEdits);
-        menu.Items.Add(learn);
-
         var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
         learnNow.Click += (_, _) => LearnFromCorrections();
         menu.Items.Add(learnNow);
 
-        var diag = new WinForms.ToolStripMenuItem("Log transcript text (diagnostic)") { Checked = _settings.DiagnosticLogging };
-        diag.Click += (_, _) => ToggleSensitiveSetting(
-            "Log dictated text?",
-            "Full transcripts and LLM output may contain passwords or other sensitive data and will be written in plaintext to the diagnostic log.",
-            () => _settings.DiagnosticLogging = !_settings.DiagnosticLogging, _settings.DiagnosticLogging);
-        menu.Items.Add(diag);
+        var settings = new WinForms.ToolStripMenuItem("Settings…");
+        settings.Click += (_, _) => OpenSettings();
+        menu.Items.Add(settings);
 
-        var update = new WinForms.ToolStripMenuItem(
-            _availableUpdateTag is null ? "Check for updates…" : $"Update to {_availableUpdateTag}…");
-        update.Click += (_, _) =>
+        if (_availableUpdateTag is { } updateTag)
         {
-            if (_availableUpdateTag is null) _ = CheckForUpdatesAsync(silent: false);
-            else PromptAndApplyUpdate(_availableUpdateTag);
-        };
-        menu.Items.Add(update);
+            var update = new WinForms.ToolStripMenuItem($"Update to {updateTag}…");
+            update.Click += (_, _) => PromptAndApplyUpdate(updateTag);
+            menu.Items.Add(update);
+        }
 
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
@@ -717,13 +652,6 @@ public sealed class AppController : IDisposable
         menu.Items.Add(quit);
 
         _tray!.ContextMenuStrip = menu;
-    }
-
-    private static void AddRadio(WinForms.ToolStripMenuItem parent, string text, bool check, Action onClick)
-    {
-        var item = new WinForms.ToolStripMenuItem(text) { Checked = check };
-        item.Click += (_, _) => onClick();
-        parent.DropDownItems.Add(item);
     }
 
     private void OpenSettings()
@@ -735,19 +663,83 @@ public sealed class AppController : IDisposable
             _hook.SetPttKey(_settings.PttKey);
             if (_tray is not null) _tray.Text = TrayTooltip();
             RebuildMenu();
-        });
+        }, _funAsr, new SettingsWindowActions(
+            IsAutoStartEnabled,
+            SetAutoStart,
+            () => CheckForUpdatesAsync(silent: false),
+            () => OpenUri(Log.FilePath),
+            InstallFunAsrAsync,
+            CancelFunAsrInstall,
+            ActiveFunAsrModelId));
         win.Show();
         win.Activate();
+    }
+
+    private Task InstallFunAsrAsync(string modelId)
+    {
+        lock (_funAsrInstallLock)
+        {
+            if (_funAsrInstallTask is { IsCompleted: false })
+            {
+                if (_funAsrInstallingModelId == modelId)
+                    return _funAsrInstallTask;
+                throw new InvalidOperationException(
+                    $"Finish or cancel the {_funAsrInstallingModelId} download before starting another model.");
+            }
+
+            var cancellation = new CancellationTokenSource();
+            Task install = _funAsr.InstallAsync(modelId, cancellation.Token);
+            _funAsrInstallCancellation = cancellation;
+            _funAsrInstallingModelId = modelId;
+            _funAsrInstallTask = ObserveFunAsrInstallAsync(modelId, cancellation, install);
+            return _funAsrInstallTask;
+        }
+    }
+
+    private async Task ObserveFunAsrInstallAsync(
+        string modelId, CancellationTokenSource cancellation, Task install)
+    {
+        try
+        {
+            await install;
+        }
+        finally
+        {
+            lock (_funAsrInstallLock)
+            {
+                if (ReferenceEquals(_funAsrInstallCancellation, cancellation))
+                {
+                    _funAsrInstallCancellation = null;
+                    _funAsrInstallingModelId = null;
+                }
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private void CancelFunAsrInstall(string modelId)
+    {
+        lock (_funAsrInstallLock)
+        {
+            if (_funAsrInstallingModelId == modelId)
+                _funAsrInstallCancellation?.Cancel();
+        }
+    }
+
+    private string? ActiveFunAsrModelId()
+    {
+        lock (_funAsrInstallLock)
+            return _funAsrInstallTask is { IsCompleted: false } ? _funAsrInstallingModelId : null;
     }
 
     private void Persist() => _store.Save(_settings);
 
     // ---------------- Updates (manual, user-chosen) ----------------
 
-    private async Task CheckForUpdatesAsync(bool silent)
+    private async Task<UpdateService.CheckResult> CheckForUpdatesAsync(bool silent)
     {
         var result = await _updater.CheckAsync();
-        _ = _ui.BeginInvoke(() =>
+        await _ui.InvokeAsync(() =>
         {
             switch (result.Outcome)
             {
@@ -755,23 +747,20 @@ public sealed class AppController : IDisposable
                     _availableUpdateTag = result.LatestTag;
                     _availableAssetUrl = result.AssetApiUrl;
                     _availableAssetSha256 = result.AssetSha256;
-                    Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
-                    RebuildMenu();
+                    if (silent)
+                        Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
                     break;
                 case UpdateService.CheckOutcome.UpToDate:
                     _availableUpdateTag = null;
                     _availableAssetUrl = null;
                     _availableAssetSha256 = null;
-                    if (!silent) Notify("Up to date", $"You're on the latest version (v{UpdateService.CurrentVersion}).");
-                    RebuildMenu();
                     break;
                 case UpdateService.CheckOutcome.CheckFailed:
-                    if (!silent)
-                        Notify("Update check failed",
-                            $"Couldn't reach GitHub Releases for {UpdateService.Repo}. Check your connection and try again.");
                     break;
             }
+            RebuildMenu();
         });
+        return result;
     }
 
     private void PromptAndApplyUpdate(string tag)
@@ -843,15 +832,6 @@ public sealed class AppController : IDisposable
     private void Notify(string title, string message) =>
         _tray?.ShowBalloonTip(6000, title, message, WinForms.ToolTipIcon.Info);
 
-    private void ToggleSensitiveSetting(string title, string warning, Action toggle, bool currentlyEnabled)
-    {
-        if (!currentlyEnabled && MessageBox.Show(warning, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-            return;
-        toggle();
-        Persist();
-        RebuildMenu();
-    }
-
     private void PreserveText(string text, string reason)
     {
         _pendingText = text;
@@ -908,10 +888,33 @@ public sealed class AppController : IDisposable
 
     public void Dispose()
     {
+        Task? installTask;
+        lock (_funAsrInstallLock)
+        {
+            _funAsrInstallCancellation?.Cancel();
+            installTask = _funAsrInstallTask;
+        }
+        if (installTask is { IsCompleted: false })
+        {
+            try
+            {
+                if (!installTask.Wait(TimeSpan.FromSeconds(5)))
+                    Log.Write("WARN FunASR installation did not stop within the shutdown timeout.");
+            }
+            catch (AggregateException exception) when (exception.InnerExceptions.All(
+                inner => inner is OperationCanceledException))
+            {
+            }
+            catch (AggregateException exception)
+            {
+                Log.Error("FunASR install shutdown", exception.Flatten().InnerException ?? exception);
+            }
+        }
         _session.Dispose();
         _hook.Dispose();
         _audio.Dispose();
         DisposeEngine();
+        _funAsr.Dispose();
         if (_tray is not null)
         {
             _tray.Visible = false;
