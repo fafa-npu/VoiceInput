@@ -13,45 +13,83 @@
         IsHitTestVisible="False"
         Focusable="False">
 
-    <!-- Fixed-size transparent host; the capsule is centered and its Width is animated,
-         so the window never resizes and the pill grows/shrinks smoothly from its center. -->
+    <!-- Fixed-size transparent host; the control pod is centered and its Width is animated,
+         so the window never resizes and the pod grows/shrinks smoothly from its center. -->
     <Grid>
         <Border x:Name="Capsule"
-                Height="56"
-                CornerRadius="28"
-                Padding="18,0"
-                Width="160"
-                ClipToBounds="True"
+                Height="64"
+                Width="220"
                 HorizontalAlignment="Center"
-                VerticalAlignment="Center">
-            <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#F22A2A2E" Offset="0" />
-                    <GradientStop Color="#F21C1C1F" Offset="1" />
-                </LinearGradientBrush>
-            </Border.Background>
-            <Border.BorderBrush>
-                <SolidColorBrush Color="#26FFFFFF" />
-            </Border.BorderBrush>
-            <Border.BorderThickness>1</Border.BorderThickness>
+                VerticalAlignment="Center"
+                Background="Transparent">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.45" Color="#000000" />
             </Border.Effect>
 
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
-                <controls:WaveformControl x:Name="Wave"
-                                          Width="44" Height="32"
-                                          VerticalAlignment="Center"
-                                          Margin="0,0,14,0" />
-                <TextBlock x:Name="Label"
-                           VerticalAlignment="Center"
-                           MaxWidth="640"
-                           Foreground="#FFF5F5F7"
-                           FontSize="18"
-                           FontWeight="Medium"
-                           TextTrimming="None"
-                           TextWrapping="NoWrap" />
-            </StackPanel>
+            <Border Background="Transparent" ClipToBounds="True">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="64" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border x:Name="WaveModule"
+                        Width="64"
+                        Height="64"
+                        CornerRadius="16"
+                        Background="#DFFF52"
+                        Panel.ZIndex="1">
+                    <controls:WaveformControl x:Name="Wave"
+                                              Width="44"
+                                              Height="32"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                </Border>
+
+                <Border x:Name="InformationPod"
+                        Grid.Column="1"
+                        Height="54"
+                        Margin="-2,0,0,0"
+                        Padding="16,0,12,0"
+                        VerticalAlignment="Center"
+                        Background="#171A1D"
+                        CornerRadius="0,12,12,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="PhaseLabel"
+                                       Foreground="#FFADB2B7"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Text="LIVE INPUT" />
+                            <TextBlock x:Name="Label"
+                                       MaxWidth="580"
+                                       Foreground="#FFF5F5F7"
+                                       FontSize="18"
+                                       FontWeight="Medium"
+                                       TextTrimming="None"
+                                       TextWrapping="NoWrap" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="LiveIndicator"
+                                    Grid.Column="1"
+                                    Margin="12,0,0,0"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <Ellipse Width="6" Height="6" Margin="0,0,5,0" Fill="#DFFF52" />
+                            <TextBlock Foreground="#DFFF52"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Text="LIVE" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+            </Border>
         </Border>
     </Grid>
 </Window>
