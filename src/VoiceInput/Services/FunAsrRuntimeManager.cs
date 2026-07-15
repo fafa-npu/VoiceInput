@@ -169,23 +169,33 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         try
         {
             FunAsrModelDefinition model = _getModel(modelId);
+            long packageSize = _runtimeArtifact.Size + _vadArtifact.Size + model.DownloadSize;
             if (IsInstalled(model.Id))
             {
-                Report(model.Id, FunAsrInstallStage.Installed, string.Empty, model.DownloadSize, model.DownloadSize);
+                Report(model.Id, FunAsrInstallStage.Installed, string.Empty, packageSize, packageSize);
                 return;
             }
 
             try
             {
-                await InstallRuntimeArchiveCoreAsync(_runtimeArtifact, model.Id, cancellationToken).ConfigureAwait(false);
-                await DownloadArtifactAsync(_vadArtifact, model.Id, cancellationToken).ConfigureAwait(false);
+                long completedBytes = 0;
+                await InstallRuntimeArchiveCoreAsync(
+                    _runtimeArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
+                completedBytes += _runtimeArtifact.Size;
+                await DownloadArtifactAsync(
+                    _vadArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
+                completedBytes += _vadArtifact.Size;
                 foreach (FunAsrArtifact artifact in model.Artifacts)
-                    await DownloadArtifactAsync(artifact, model.Id, cancellationToken).ConfigureAwait(false);
+                {
+                    await DownloadArtifactAsync(
+                        artifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
+                    completedBytes += artifact.Size;
+                }
 
-                Report(model.Id, FunAsrInstallStage.Testing, model.DisplayName, 0, null);
+                Report(model.Id, FunAsrInstallStage.Testing, model.DisplayName, packageSize, packageSize);
                 await _smokeTest(ResolveFiles(model), cancellationToken).ConfigureAwait(false);
                 MarkInstalled(model);
-                Report(model.Id, FunAsrInstallStage.Installed, model.DisplayName, model.DownloadSize, model.DownloadSize);
+                Report(model.Id, FunAsrInstallStage.Installed, model.DisplayName, packageSize, packageSize);
             }
             catch (OperationCanceledException)
             {
@@ -219,7 +229,11 @@ internal sealed class FunAsrRuntimeManager : IDisposable
     }
 
     private async Task InstallRuntimeArchiveCoreAsync(
-        FunAsrArtifact artifact, string modelId, CancellationToken cancellationToken)
+        FunAsrArtifact artifact,
+        string modelId,
+        CancellationToken cancellationToken,
+        long completedBytes = 0,
+        long? overallTotalBytes = null)
     {
         InstallationManifest manifest = LoadManifest();
         string destinationPath = ResolvePath(Path.Combine("runtime", FunAsrModelCatalog.RuntimeVersion));
@@ -231,7 +245,8 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             return;
         }
 
-        await DownloadArtifactAsync(artifact, modelId, cancellationToken).ConfigureAwait(false);
+        await DownloadArtifactAsync(
+            artifact, modelId, cancellationToken, completedBytes, overallTotalBytes).ConfigureAwait(false);
 
         string archivePath = ResolvePath(artifact.RelativePath);
         string runtimeRoot = ResolvePath("runtime");
@@ -285,7 +300,11 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         DownloadArtifactAsync(artifact, string.Empty, cancellationToken);
 
     private async Task DownloadArtifactAsync(
-        FunAsrArtifact artifact, string modelId, CancellationToken cancellationToken)
+        FunAsrArtifact artifact,
+        string modelId,
+        CancellationToken cancellationToken,
+        long completedBytes = 0,
+        long? overallTotalBytes = null)
     {
         string finalPath = ResolvePath(artifact.RelativePath);
         string partPath = finalPath + ".part";
@@ -304,7 +323,14 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
         if (existing == artifact.Size)
         {
-            await ActivateVerifiedPartAsync(partPath, finalPath, artifact, modelId, cancellationToken)
+            await ActivateVerifiedPartAsync(
+                partPath,
+                finalPath,
+                artifact,
+                modelId,
+                cancellationToken,
+                completedBytes,
+                overallTotalBytes)
                 .ConfigureAwait(false);
             return;
         }
@@ -343,7 +369,14 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             }
         }
 
-        long total = artifact.Size;
+        long progressTotal = overallTotalBytes ?? artifact.Size;
+        int reportedPercent = (int)((completedBytes + existing) * 100d / progressTotal);
+        Report(
+            modelId,
+            FunAsrInstallStage.Downloading,
+            Path.GetFileName(artifact.RelativePath),
+            completedBytes + existing,
+            progressTotal);
         using Stream source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using (var destination = new FileStream(
             partPath,
@@ -366,17 +399,29 @@ internal sealed class FunAsrRuntimeManager : IDisposable
                 }
                 await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                 downloaded += read;
-                Report(
-                    modelId,
-                    FunAsrInstallStage.Downloading,
-                    Path.GetFileName(artifact.RelativePath),
-                    downloaded,
-                    total);
+                int percent = (int)((completedBytes + downloaded) * 100d / progressTotal);
+                if (percent != reportedPercent)
+                {
+                    reportedPercent = percent;
+                    Report(
+                        modelId,
+                        FunAsrInstallStage.Downloading,
+                        Path.GetFileName(artifact.RelativePath),
+                        completedBytes + downloaded,
+                        progressTotal);
+                }
             }
 
             await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
-        await ActivateVerifiedPartAsync(partPath, finalPath, artifact, modelId, cancellationToken)
+        await ActivateVerifiedPartAsync(
+            partPath,
+            finalPath,
+            artifact,
+            modelId,
+            cancellationToken,
+            completedBytes,
+            overallTotalBytes)
             .ConfigureAwait(false);
     }
 
@@ -385,14 +430,16 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         string finalPath,
         FunAsrArtifact artifact,
         string modelId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long completedBytes = 0,
+        long? overallTotalBytes = null)
     {
         Report(
             modelId,
             FunAsrInstallStage.Verifying,
             Path.GetFileName(artifact.RelativePath),
-            artifact.Size,
-            artifact.Size);
+            completedBytes + artifact.Size,
+            overallTotalBytes ?? artifact.Size);
 
         if (!await MatchesAsync(partPath, artifact, cancellationToken).ConfigureAwait(false))
         {

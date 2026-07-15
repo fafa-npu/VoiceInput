@@ -36,6 +36,25 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task LargeDownloadReportsAtMostOncePerPercent()
+    {
+        byte[] content = new byte[10_000_000];
+        using var manager = CreateManager(new BytesHandler(content));
+        var progress = new List<FunAsrInstallProgress>();
+        manager.ProgressChanged += update =>
+        {
+            if (update.Stage == FunAsrInstallStage.Downloading)
+                progress.Add(update);
+        };
+
+        await manager.DownloadArtifactAsync(Artifact(content), CancellationToken.None);
+
+        Assert.InRange(progress.Count, 2, 101);
+        Assert.Equal(content.Length, progress[^1].DownloadedBytes);
+        Assert.Equal(content.Length, progress[^1].TotalBytes);
+    }
+
+    [Fact]
     public async Task DownloadResumesExistingPartFile()
     {
         byte[] content = "resumable content"u8.ToArray();
@@ -220,6 +239,29 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
         Assert.Contains(FunAsrInstallStage.Testing, stages);
         Assert.Equal(FunAsrInstallStage.Installed, stages[^1]);
         Assert.True(File.Exists(Path.Combine(_root, "installation.json")));
+    }
+
+    [Fact]
+    public async Task InstallReportsOverallPackageProgress()
+    {
+        TestCatalog catalog = CreateTestCatalog();
+        var progress = new List<FunAsrInstallProgress>();
+        using var manager = CreateManager(
+            new MappedBytesHandler(catalog.Content),
+            smokeTest: (_, _) => Task.CompletedTask,
+            catalog: catalog);
+        manager.ProgressChanged += update =>
+        {
+            if (update.Stage == FunAsrInstallStage.Downloading)
+                progress.Add(update);
+        };
+
+        await manager.InstallAsync(catalog.Model.Id, CancellationToken.None);
+
+        long total = catalog.Runtime.Size + catalog.Vad.Size + catalog.Model.DownloadSize;
+        Assert.NotEmpty(progress);
+        Assert.All(progress, update => Assert.Equal(total, update.TotalBytes));
+        Assert.Equal(total, progress[^1].DownloadedBytes);
     }
 
     [Fact]

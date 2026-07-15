@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -298,7 +299,8 @@ public partial class SettingsWindow : Window
         bool defaultInstalled = _funAsr.IsInstalled(FunAsrModelCatalog.DefaultId);
         SetUpFunAsrButton.Content = defaultInstalled ? "Manage FunASR" : "Set up FunASR";
         FunAsrSummaryText.Text =
-            $"Runtime {FunAsrModelCatalog.RuntimeVersion} - {installedCount} of {FunAsrModelCatalog.Models.Count} models installed";
+            $"Runtime {FunAsrModelCatalog.RuntimeVersion} · {RuntimeBuild} · "
+            + $"{installedCount} of {FunAsrModelCatalog.Models.Count} models installed";
     }
 
     private void RefreshSpeechSummary()
@@ -370,6 +372,9 @@ public partial class SettingsWindow : Window
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Right,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 220,
             };
             var buttons = new StackPanel
             {
@@ -377,19 +382,28 @@ public partial class SettingsWindow : Window
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Margin = new Thickness(16, 8, 0, 0),
             };
+            var progressDetail = new TextBlock
+            {
+                Foreground = MutedBrush,
+                FontSize = 11,
+                Margin = new Thickness(0, 12, 0, 0),
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
             var progress = new ProgressBar
             {
-                Height = 4,
+                Height = 8,
                 Minimum = 0,
                 Maximum = 100,
                 Visibility = Visibility.Collapsed,
-                Margin = new Thickness(0, 12, 0, 0),
+                Margin = new Thickness(0, 5, 0, 0),
                 Foreground = SuccessBrush,
             };
 
             var content = new Grid();
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -405,13 +419,16 @@ public partial class SettingsWindow : Window
             Grid.SetRow(buttons, 1);
             Grid.SetRowSpan(buttons, 2);
             Grid.SetColumn(buttons, 1);
-            Grid.SetRow(progress, 3);
+            Grid.SetRow(progressDetail, 3);
+            Grid.SetColumnSpan(progressDetail, 2);
+            Grid.SetRow(progress, 4);
             Grid.SetColumnSpan(progress, 2);
             content.Children.Add(titlePanel);
             content.Children.Add(status);
             content.Children.Add(description);
             content.Children.Add(meta);
             content.Children.Add(buttons);
+            content.Children.Add(progressDetail);
             content.Children.Add(progress);
 
             var border = new Border
@@ -425,7 +442,7 @@ public partial class SettingsWindow : Window
                 Child = content,
             };
             FunAsrModelsPanel.Children.Add(border);
-            _modelRows[model.Id] = new(selectedText, status, progress, buttons);
+            _modelRows[model.Id] = new(selectedText, status, progressDetail, progress, buttons);
         }
     }
 
@@ -436,25 +453,29 @@ public partial class SettingsWindow : Window
         {
             ModelRow row = _modelRows[model.Id];
             bool selected = model.Id == _selectedFunAsrModelId;
-            bool installed = _funAsr.IsInstalled(model.Id);
             bool compatible = model.Supports(_draft.Language);
             _modelProgress.TryGetValue(model.Id, out FunAsrInstallProgress? progress);
             bool terminal = progress?.Stage is FunAsrInstallStage.Installed
                 or FunAsrInstallStage.Failed
                 or FunAsrInstallStage.NotInstalled;
-            bool installing = model.Id == activeModelId && !terminal;
+            bool installing = !terminal && (model.Id == activeModelId || progress is not null);
 
             row.Selected.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
             row.Actions.Children.Clear();
+            row.ProgressDetail.Visibility = Visibility.Collapsed;
+            row.ProgressDetail.Text = string.Empty;
             row.Progress.Visibility = Visibility.Collapsed;
             row.Progress.IsIndeterminate = false;
+            row.Progress.Value = 0;
 
             if (installing)
             {
-                row.Status.Text = ProgressText(progress);
+                row.Status.Text = ProgressText(model, progress);
                 row.Status.Foreground = AttentionBrush;
+                row.ProgressDetail.Text = ProgressDetailText(progress);
+                row.ProgressDetail.Visibility = Visibility.Visible;
                 row.Progress.Visibility = Visibility.Visible;
-                if (progress?.TotalBytes > 0 && progress.Stage == FunAsrInstallStage.Downloading)
+                if (progress?.TotalBytes > 0 && progress.DownloadedBytes > 0)
                 {
                     row.Progress.Value = Math.Clamp(
                         progress.DownloadedBytes * 100d / progress.TotalBytes.Value, 0, 100);
@@ -467,6 +488,7 @@ public partial class SettingsWindow : Window
                 continue;
             }
 
+            bool installed = _funAsr.IsInstalled(model.Id);
             if (installed)
             {
                 row.Status.Text = compatible ? "Installed" : $"Installed - not available for {_draft.Language}";
@@ -523,7 +545,17 @@ public partial class SettingsWindow : Window
         try
         {
             SetStatus($"Installing {model.DisplayName}...", AttentionBrush);
-            await _actions.InstallFunAsr(modelId);
+            long packageSize = FunAsrModelCatalog.Runtime.Size
+                + FunAsrModelCatalog.Vad.Size
+                + model.DownloadSize;
+            _modelProgress[modelId] = new(
+                modelId,
+                FunAsrInstallStage.Downloading,
+                Path.GetFileName(FunAsrModelCatalog.Runtime.RelativePath),
+                0,
+                packageSize);
+            RefreshModelRows();
+            await Task.Run(() => _actions.InstallFunAsr(modelId));
             if (_closed)
                 return;
 
@@ -540,6 +572,8 @@ public partial class SettingsWindow : Window
         {
             if (!_closed)
             {
+                _modelProgress[modelId] = new(
+                    modelId, FunAsrInstallStage.NotInstalled, string.Empty, 0, null);
                 RefreshAll();
                 SetStatus($"{model.DisplayName} download canceled. It can resume later.", MutedBrush);
             }
@@ -548,6 +582,8 @@ public partial class SettingsWindow : Window
         {
             if (!_closed)
             {
+                _modelProgress[modelId] = new(
+                    modelId, FunAsrInstallStage.Failed, string.Empty, 0, null, exception.Message);
                 RefreshAll();
                 SetStatus(exception.Message, ErrorBrush);
             }
@@ -622,9 +658,16 @@ public partial class SettingsWindow : Window
             if (_closed)
                 return;
             _modelProgress[progress.ModelId] = progress;
-            RefreshOverview();
-            RefreshSpeechSummary();
-            RefreshModelRows();
+            if (progress.Stage is FunAsrInstallStage.Installed
+                or FunAsrInstallStage.Failed
+                or FunAsrInstallStage.NotInstalled)
+            {
+                RefreshAll();
+            }
+            else
+            {
+                RefreshModelRows();
+            }
             if (progress.Stage == FunAsrInstallStage.Failed)
                 SetStatus(progress.Error ?? "FunASR installation failed.", ErrorBrush);
         });
@@ -833,13 +876,44 @@ public partial class SettingsWindow : Window
         ? $"{size / 1_000_000_000d:F1} GB"
         : $"{size / 1_000_000d:F0} MB";
 
-    private static string ProgressText(FunAsrInstallProgress? progress) => progress?.Stage switch
+    private static string RuntimeBuild =>
+        FunAsrModelCatalog.Runtime.RelativePath.Contains("avx2", StringComparison.OrdinalIgnoreCase)
+            ? "AVX2 CPU build"
+            : "Compatible x64 build";
+
+    private static string ProgressText(
+        FunAsrModelDefinition model, FunAsrInstallProgress? progress) => progress?.Stage switch
     {
-        FunAsrInstallStage.Downloading => $"Downloading {progress.Artifact}",
-        FunAsrInstallStage.Verifying => "Verifying download",
+        FunAsrInstallStage.Downloading when !string.IsNullOrWhiteSpace(progress.Artifact) =>
+            $"Downloading {PackageName(model, progress.Artifact)}",
+        FunAsrInstallStage.Downloading => "Preparing download",
+        FunAsrInstallStage.Verifying => $"Verifying {PackageName(model, progress.Artifact)}",
         FunAsrInstallStage.Testing => "Testing local runtime",
         _ => "Installing",
     };
+
+    private static string ProgressDetailText(FunAsrInstallProgress? progress)
+    {
+        if (progress?.TotalBytes is not > 0)
+            return string.Empty;
+        double percent = Math.Clamp(progress.DownloadedBytes * 100d / progress.TotalBytes.Value, 0, 100);
+        string artifact = string.IsNullOrWhiteSpace(progress.Artifact) ? string.Empty : $" · {progress.Artifact}";
+        return $"{FormatTransferSize(progress.DownloadedBytes)} of "
+            + $"{FormatTransferSize(progress.TotalBytes.Value)} · {percent:F0}%{artifact}";
+    }
+
+    private static string PackageName(FunAsrModelDefinition model, string artifact)
+    {
+        if (artifact.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return $"FunASR runtime ({RuntimeBuild})";
+        if (artifact.Contains("vad", StringComparison.OrdinalIgnoreCase))
+            return "voice activity detector";
+        return $"{model.DisplayName} model";
+    }
+
+    private static string FormatTransferSize(long size) => size >= 1_000_000_000
+        ? $"{size / 1_000_000_000d:F2} GB"
+        : $"{size / 1_000_000d:F1} MB";
 
     private static void AddLink(TextBlock target, string text, Uri uri)
     {
@@ -884,6 +958,7 @@ public partial class SettingsWindow : Window
     private sealed record ModelRow(
         TextBlock Selected,
         TextBlock Status,
+        TextBlock ProgressDetail,
         ProgressBar Progress,
         StackPanel Actions);
 }

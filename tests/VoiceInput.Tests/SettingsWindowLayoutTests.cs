@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.ExceptionServices;
@@ -20,7 +21,75 @@ public sealed class SettingsWindowLayoutTests
     {
         VerifyPages();
         VerifyUpdateResults();
+        VerifyModelDownloadProgress();
     });
+
+    private static void VerifyModelDownloadProgress()
+    {
+        EnsureWindowsDirectoryEnvironment();
+        string root = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
+        using var manager = new FunAsrRuntimeManager(
+            root,
+            new HttpClient(new OfflineHandler()),
+            () => long.MaxValue,
+            (_, _) => Task.CompletedTask);
+        var pendingInstall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? activeModel = null;
+        var actions = new SettingsWindowActions(
+            () => false,
+            _ => { },
+            () => Task.FromResult(new UpdateService.CheckResult(
+                UpdateService.CheckOutcome.UpToDate,
+                $"v{UpdateService.CurrentVersion}",
+                UpdateService.CurrentVersion,
+                null)),
+            _ => { },
+            () => { },
+            modelId =>
+            {
+                Thread.Sleep(500);
+                activeModel = modelId;
+                return pendingInstall.Task;
+            },
+            _ => pendingInstall.TrySetCanceled(),
+            () => activeModel);
+        var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
+        {
+            ShowInTaskbar = false,
+        };
+
+        try
+        {
+            window.Show();
+            Assert.IsType<RadioButton>(window.FindName("FunAsrNav")).IsChecked = true;
+            var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+            Layout(window, content, 900, 650);
+            Button download = Descendants<Button>(window)
+                .First(button => Equals(button.Content, "Download"));
+
+            var stopwatch = Stopwatch.StartNew();
+            download.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            stopwatch.Stop();
+            Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(250));
+            Assert.Contains(Descendants<ProgressBar>(window), progress => progress.Visibility == Visibility.Visible);
+            Assert.Contains(Descendants<TextBlock>(window), text =>
+                text.Visibility == Visibility.Visible
+                && text.Text.Contains(Path.GetFileName(FunAsrModelCatalog.Runtime.RelativePath))
+                && text.Text.Contains("MB"));
+            Layout(window, content, 720, 520);
+            Capture(window, Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR"),
+                "funasr-download-progress-720x520.png");
+            Assert.IsType<RadioButton>(window.FindName("AppNav")).IsChecked = true;
+            Assert.Equal(Visibility.Visible, Assert.IsType<ScrollViewer>(window.FindName("AppPage")).Visibility);
+        }
+        finally
+        {
+            pendingInstall.TrySetCanceled();
+            window.Close();
+        }
+    }
 
     private static void RunOnSta(Action verify)
     {
@@ -223,6 +292,18 @@ public sealed class SettingsWindowLayoutTests
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using FileStream stream = File.Create(Path.Combine(directory, fileName));
         encoder.Save(stream);
+    }
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+                yield return match;
+            foreach (T descendant in Descendants<T>(child))
+                yield return descendant;
+        }
     }
 
     private sealed class OfflineHandler : HttpMessageHandler
