@@ -19,13 +19,12 @@ public partial class OverlayWindow : Window
 {
     private const double BottomMargin = 64;
 
-    // Width-geometry constants (must match the XAML padding / waveform block).
-    private const double LeftPad = 18;
-    private const double RightPad = 18;
-    private const double WaveBlock = 44 + 14;     // waveform width + right margin
-    private const double TextMaxWidth = 640;      // matches Label.MaxWidth
-    private const double MinCapsuleWidth = 160;
-    private const double MaxCapsuleWidth = LeftPad + WaveBlock + TextMaxWidth + RightPad;
+    // Width-geometry constants (must match the XAML module and information-pod chrome).
+    private const double WaveModuleWidth = 64;
+    private const double InformationPodChrome = 16 + 54 + 12; // left pad + live indicator + right pad
+    private const double TextMaxWidth = 580;      // matches Label.MaxWidth
+    private const double MinCapsuleWidth = 220;
+    private const double MaxCapsuleWidth = WaveModuleWidth + InformationPodChrome + TextMaxWidth;
 
     private const double WidthAnimSeconds = 0.25;
     private const double EntranceSeconds = 0.35;
@@ -69,6 +68,8 @@ public partial class OverlayWindow : Window
         // lands on the monitor the user is working on.
         _anchorWindow = GetForegroundWindow();
 
+        PhaseLabel.Text = "LIVE INPUT";
+        LiveIndicator.Visibility = Visibility.Visible;
         Label.Text = placeholder;
         Label.Opacity = 0.65;
         SetWidth(ComputeTargetWidth(placeholder), animate: false);   // entrance scales from this width
@@ -82,6 +83,8 @@ public partial class OverlayWindow : Window
     public void SetText(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
+        PhaseLabel.Text = "LIVE INPUT";
+        LiveIndicator.Visibility = Visibility.Visible;
         Label.Opacity = 1.0;
         // When the transcript is longer than the capsule can show, display the tail (the latest
         // words) with a leading ellipsis instead of clipping the end out of view.
@@ -111,9 +114,12 @@ public partial class OverlayWindow : Window
 
     public void SetStatus(string status)
     {
+        PhaseLabel.Text = "PROCESSING";
+        LiveIndicator.Visibility = Visibility.Collapsed;
         Label.Opacity = 0.85;
-        Label.Text = status;
-        SetWidth(ComputeTargetWidth(status), animate: true);
+        string shown = FitTail(status, TextMaxWidth);
+        Label.Text = shown;
+        SetWidth(ComputeTargetWidth(shown), animate: true);
     }
 
     public void HideAnimated()
@@ -156,7 +162,7 @@ public partial class OverlayWindow : Window
     private double ComputeTargetWidth(string text)
     {
         double textWidth = Math.Min(MeasureTextWidth(text), TextMaxWidth);
-        double content = LeftPad + WaveBlock + textWidth + RightPad + 2;   // +2 guards rounding
+        double content = WaveModuleWidth + InformationPodChrome + textWidth + 2; // +2 guards rounding
         return Math.Clamp(content, MinCapsuleWidth, MaxCapsuleWidth);
     }
 
@@ -171,7 +177,7 @@ public partial class OverlayWindow : Window
             typeface,
             Label.FontSize,
             Brushes.White,
-            pixelsPerDip: 1.0);   // Width is returned in DIPs, so DPI is irrelevant to the measure
+            pixelsPerDip: VisualTreeHelper.GetDpi(Label).PixelsPerDip);
         return ft.Width;
     }
 

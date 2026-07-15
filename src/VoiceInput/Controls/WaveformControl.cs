@@ -28,7 +28,7 @@ public sealed class WaveformControl : FrameworkElement
     {
         Width = 44;
         Height = 32;
-        _brush = new SolidColorBrush(Color.FromRgb(0xEC, 0xEC, 0xF2));
+        _brush = new SolidColorBrush(Color.FromRgb(0x17, 0x1A, 0x1D));
         _brush.Freeze();
     }
 

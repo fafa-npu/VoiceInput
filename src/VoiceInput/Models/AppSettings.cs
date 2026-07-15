@@ -9,6 +9,8 @@ public enum SpeechEngineKind
     Azure,
     /// <summary>Batch transcription via an Azure AI Foundry gpt-4o-transcribe deployment (Entra auth).</summary>
     GptTranscribe,
+    /// <summary>Batch transcription with an app-managed local FunASR GGUF model.</summary>
+    FunAsr,
 }
 
 /// <summary>How VoiceInput authenticates to the Azure Speech resource.</summary>
@@ -26,6 +28,9 @@ public enum AzureAuthMode
 /// </summary>
 public sealed class AppSettings
 {
+    /// <summary>False until a new user completes or explicitly skips the first-run guide.</summary>
+    public bool OnboardingCompleted { get; set; }
+
     /// <summary>Recognition language. Default Simplified Chinese so it works out of the box for zh-CN.</summary>
     public string Language { get; set; } = "zh-CN";
 
@@ -33,6 +38,9 @@ public sealed class AppSettings
     public string PttKey { get; set; } = "RightCtrl";
 
     public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
+
+    /// <summary>Stable ID of the app-managed local FunASR model.</summary>
+    public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
 
     // --- Azure Speech ---
     public string AzureKey { get; set; } = string.Empty;

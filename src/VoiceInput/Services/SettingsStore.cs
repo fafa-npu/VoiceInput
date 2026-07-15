@@ -53,9 +53,11 @@ public sealed class SettingsStore
 
             return new AppSettings
             {
+                OnboardingCompleted = dto.OnboardingCompleted,
                 Language = dto.Language,
                 PttKey = dto.PttKey,
                 Engine = dto.Engine,
+                FunAsrModelId = FunAsrModelCatalog.NormalizeId(dto.FunAsrModelId),
                 AzureRegion = dto.AzureRegion,
                 AzureKey = Unprotect(dto.AzureKeyEnc),
                 AzureAuthMode = dto.AzureAuthMode,
@@ -89,9 +91,11 @@ public sealed class SettingsStore
         Directory.CreateDirectory(_dir);
         var dto = new PersistedSettings
         {
+            OnboardingCompleted = s.OnboardingCompleted,
             Language = s.Language,
             PttKey = s.PttKey,
             Engine = s.Engine,
+            FunAsrModelId = FunAsrModelCatalog.NormalizeId(s.FunAsrModelId),
             AzureRegion = s.AzureRegion,
             AzureKeyEnc = Protect(s.AzureKey),
             AzureAuthMode = s.AzureAuthMode,
@@ -160,9 +164,12 @@ public sealed class SettingsStore
     /// <summary>On-disk shape. Secret fields hold DPAPI base64, never plaintext.</summary>
     private sealed class PersistedSettings
     {
+        // Missing on settings written before the onboarding feature; existing users stay completed.
+        public bool OnboardingCompleted { get; set; } = true;
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
+        public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
         public string AzureRegion { get; set; } = "eastasia";
         public string AzureKeyEnc { get; set; } = string.Empty;
         public AzureAuthMode AzureAuthMode { get; set; } = AzureAuthMode.Key;
