@@ -37,4 +37,16 @@ public sealed class FunAsrModelCatalogTests
             Assert.Equal(Uri.UriSchemeHttps, artifact.Url.Scheme);
         });
     }
+
+    [Theory]
+    [InlineData(false, "funasr-llamacpp-windows-x64.zip", "runtime-v0.1.5.zip")]
+    [InlineData(true, "funasr-llamacpp-windows-x64-avx2.zip", "runtime-v0.1.5-avx2.zip")]
+    public void SelectsRuntimeForCpuCapabilities(
+        bool avx2Supported, string assetName, string relativePath)
+    {
+        FunAsrArtifact runtime = FunAsrModelCatalog.SelectRuntime(avx2Supported);
+
+        Assert.EndsWith(assetName, runtime.Url.AbsolutePath);
+        Assert.Equal(relativePath, runtime.RelativePath);
+    }
 }
