@@ -13,6 +13,7 @@ internal sealed record SettingsWindowActions(
     Func<bool> IsAutoStartEnabled,
     Action<bool> SetAutoStart,
     Func<Task<UpdateService.CheckResult>> CheckForUpdates,
+    Action<string> InstallUpdate,
     Action OpenLog,
     Func<string, Task> InstallFunAsr,
     Action<string> CancelFunAsr,
@@ -36,6 +37,7 @@ public partial class SettingsWindow : Window
     private readonly Dictionary<string, ModelRow> _modelRows =
         new(StringComparer.OrdinalIgnoreCase);
     private string _selectedFunAsrModelId;
+    private string? _availableUpdateTag;
     private bool _loading = true;
     private bool _closed;
 
@@ -657,6 +659,8 @@ public partial class SettingsWindow : Window
     private async void OnCheckForUpdates(object sender, RoutedEventArgs e)
     {
         CheckUpdatesButton.IsEnabled = false;
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        _availableUpdateTag = null;
         SetStatus("Checking for updates...", MutedBrush);
         try
         {
@@ -664,9 +668,10 @@ public partial class SettingsWindow : Window
             switch (result.Outcome)
             {
                 case UpdateService.CheckOutcome.UpdateAvailable:
-                    SetStatus(
-                        $"{result.LatestTag} is available. Use the tray menu to install it.",
-                        AttentionBrush);
+                    _availableUpdateTag = result.LatestTag;
+                    InstallUpdateButton.Content = $"Update to {result.LatestTag}";
+                    InstallUpdateButton.Visibility = Visibility.Visible;
+                    SetStatus($"{result.LatestTag} is available.", AttentionBrush);
                     break;
                 case UpdateService.CheckOutcome.UpToDate:
                     SetStatus($"You're using the latest version (v{UpdateService.CurrentVersion}).", SuccessBrush);
@@ -684,6 +689,12 @@ public partial class SettingsWindow : Window
         {
             CheckUpdatesButton.IsEnabled = true;
         }
+    }
+
+    private void OnInstallUpdate(object sender, RoutedEventArgs e)
+    {
+        if (_availableUpdateTag is { } tag)
+            _actions.InstallUpdate(tag);
     }
 
     private void OnStartAtLoginChanged(object sender, RoutedEventArgs e)

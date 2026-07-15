@@ -709,6 +709,7 @@ public sealed class AppController : IDisposable
             IsAutoStartEnabled,
             SetAutoStart,
             () => CheckForUpdatesAsync(silent: false),
+            PromptAndApplyUpdate,
             () => OpenUri(Log.FilePath),
             InstallFunAsrAsync,
             CancelFunAsrInstall,

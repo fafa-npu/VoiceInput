@@ -61,10 +61,12 @@ public sealed class SettingsWindowLayoutTests
             $"v{UpdateService.CurrentVersion}",
             UpdateService.CurrentVersion,
             null);
+        string? requestedUpdate = null;
         var actions = new SettingsWindowActions(
             () => false,
             _ => { },
             () => Task.FromResult(result),
+            tag => requestedUpdate = tag,
             () => { },
             _ => Task.CompletedTask,
             _ => { },
@@ -75,21 +77,22 @@ public sealed class SettingsWindowLayoutTests
         };
         window.Show();
         var button = Assert.IsType<Button>(window.FindName("CheckUpdatesButton"));
+        var installButton = Assert.IsType<Button>(window.FindName("InstallUpdateButton"));
         var status = Assert.IsType<TextBlock>(window.FindName("StatusText"));
 
-        foreach ((UpdateService.CheckResult checkResult, string expected) in new[]
+        foreach ((UpdateService.CheckResult checkResult, string expected, bool canInstall) in new[]
         {
             (new UpdateService.CheckResult(
                 UpdateService.CheckOutcome.UpdateAvailable,
                 "v9.9.9",
                 new Version(9, 9, 9),
-                "https://api.github.com/update"), "v9.9.9 is available"),
-            (result, "latest version"),
+                "https://api.github.com/update"), "v9.9.9 is available", true),
+            (result, "latest version", false),
             (new UpdateService.CheckResult(
                 UpdateService.CheckOutcome.CheckFailed,
                 null,
                 null,
-                null), "Update check failed. Please try again."),
+                null), "Update check failed. Please try again.", false),
         })
         {
             result = checkResult;
@@ -97,6 +100,13 @@ public sealed class SettingsWindowLayoutTests
             Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
             Assert.Contains(expected, status.Text);
             Assert.True(button.IsEnabled);
+            Assert.Equal(canInstall ? Visibility.Visible : Visibility.Collapsed, installButton.Visibility);
+            if (canInstall)
+            {
+                Assert.Equal("Update to v9.9.9", installButton.Content);
+                installButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Equal("v9.9.9", requestedUpdate);
+            }
         }
 
         window.Close();
@@ -120,6 +130,7 @@ public sealed class SettingsWindowLayoutTests
                 $"v{UpdateService.CurrentVersion}",
                 UpdateService.CurrentVersion,
                 null)),
+            _ => { },
             () => { },
             _ => Task.CompletedTask,
             _ => { },
