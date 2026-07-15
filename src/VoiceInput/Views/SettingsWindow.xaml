@@ -308,7 +308,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="16,13">
-                                <TextBlock Text="Push-to-talk" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                <TextBlock Text="Voice activation" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
                                 <TextBlock x:Name="OverviewPttText" FontWeight="SemiBold" Margin="0,3,0,0" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="16,13">
@@ -519,6 +519,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="Language" Style="{StaticResource FieldLabel}" />
                         <ComboBox x:Name="LanguageCombo" Grid.Row="0" Grid.Column="1" SelectedValuePath="Tag">
@@ -529,8 +530,13 @@
                             <ComboBoxItem Tag="ko-KR" Content="한국어" />
                             <ComboBoxItem Tag="vi-VN" Content="Tiếng Việt" />
                         </ComboBox>
-                        <TextBlock Grid.Row="1" Text="Push-to-talk key" Style="{StaticResource FieldLabel}" />
-                        <ComboBox x:Name="PttCombo" Grid.Row="1" Grid.Column="1" SelectedValuePath="Tag">
+                        <TextBlock Grid.Row="1" Text="Activation mode" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="PttModeCombo" Grid.Row="1" Grid.Column="1">
+                            <ComboBoxItem Content="Hold to talk" />
+                            <ComboBoxItem Content="Press once to start, press again to stop" />
+                        </ComboBox>
+                        <TextBlock Grid.Row="2" Text="Activation key" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="PttCombo" Grid.Row="2" Grid.Column="1" SelectedValuePath="Tag">
                             <ComboBoxItem Tag="RightCtrl" Content="Right Ctrl" />
                             <ComboBoxItem Tag="LeftCtrl" Content="Left Ctrl" />
                             <ComboBoxItem Tag="CapsLock" Content="Caps Lock" />

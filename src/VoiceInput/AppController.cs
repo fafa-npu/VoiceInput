@@ -10,6 +10,9 @@ using WinForms = System.Windows.Forms;
 
 namespace VoiceInput;
 
+internal enum PttGesture { Engaged, Released, Cancelled }
+internal enum PttGestureAction { None, Start, Stop, Cancel, Busy }
+
 /// <summary>
 /// Wires together the keyboard hook, audio capture, speech engine, overlay, LLM refiner, and
 /// text injector, and hosts the system-tray menu. One instance owns the whole app lifecycle.
@@ -68,20 +71,58 @@ public sealed class AppController : IDisposable
         _settings = _store.Load();
 
         _hook = new KeyboardHook(_settings.PttKey);
-        _hook.Engaged += () => _ui.BeginInvoke(() =>
-        {
-            if (_session.State is DictationSessionState.Transcribing or DictationSessionState.Refining)
-            {
-                Notify("Still processing", "Wait for the current dictation to finish before starting another.");
-                return;
-            }
-            _ = StartDictationAsync();
-        });
-        _hook.Released += () => _ui.BeginInvoke(() => _ = StopDictationAsync());
-        _hook.Cancelled += () => _ui.BeginInvoke(() => _ = CancelDictationAsync());
+        _hook.Engaged += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Engaged));
+        _hook.Released += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Released));
+        _hook.Cancelled += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Cancelled));
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
 
         _audio.LevelChanged += lvl => { _level = lvl; if (lvl > _sessionPeak) _sessionPeak = lvl; };
+    }
+
+    internal static PttGestureAction ResolvePttGesture(
+        PttMode mode,
+        PttGesture gesture,
+        bool dictating,
+        DictationSessionState state)
+    {
+        bool busy = state is DictationSessionState.Transcribing
+            or DictationSessionState.Refining
+            or DictationSessionState.Injecting;
+
+        if (mode == PttMode.Toggle)
+        {
+            if (gesture != PttGesture.Released) return PttGestureAction.None;
+            if (busy) return PttGestureAction.Busy;
+            return dictating ? PttGestureAction.Stop : PttGestureAction.Start;
+        }
+
+        return gesture switch
+        {
+            PttGesture.Engaged when busy => PttGestureAction.Busy,
+            PttGesture.Engaged => PttGestureAction.Start,
+            PttGesture.Released => PttGestureAction.Stop,
+            PttGesture.Cancelled => PttGestureAction.Cancel,
+            _ => PttGestureAction.None,
+        };
+    }
+
+    private void HandlePttGesture(PttGesture gesture)
+    {
+        switch (ResolvePttGesture(_settings.PttMode, gesture, _dictating, _session.State))
+        {
+            case PttGestureAction.Start:
+                _ = StartDictationAsync();
+                break;
+            case PttGestureAction.Stop:
+                _ = StopDictationAsync();
+                break;
+            case PttGestureAction.Cancel:
+                _ = CancelDictationAsync();
+                break;
+            case PttGestureAction.Busy:
+                Notify("Still processing", "Wait for the current dictation to finish before starting another.");
+                break;
+        }
     }
 
     public void Start()
@@ -89,7 +130,7 @@ public sealed class AppController : IDisposable
         _overlay = new OverlayWindow { LevelSource = () => _level };
         BuildTray();
         _hook.Install();
-        Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
+        Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, pttMode={_settings.PttMode}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
         if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
@@ -541,7 +582,9 @@ public sealed class AppController : IDisposable
         ? "VoiceInput — paused"
         : _session.State is not DictationSessionState.Idle
             ? $"VoiceInput — {_session.State.ToString().ToLowerInvariant()}"
-            : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+            : _settings.PttMode == PttMode.Toggle
+                ? $"VoiceInput — press {PttDisplay(_settings.PttKey)} to start/stop"
+                : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
 
     private void TogglePause()
     {
@@ -554,8 +597,8 @@ public sealed class AppController : IDisposable
         }
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
-            _paused ? "VoiceInput won't respond to the push-to-talk key until resumed."
-                    : "Push-to-talk is active again.");
+            _paused ? "VoiceInput won't respond to the activation key until resumed."
+                    : "Voice input activation is active again.");
         RebuildMenu();
     }
 

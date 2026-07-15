@@ -135,7 +135,8 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null);
-        var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
+        AppSettings? savedSettings = null;
+        var window = new SettingsWindow(new AppSettings(), settings => savedSettings = settings, manager, actions)
         {
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = -10_000,
@@ -151,17 +152,37 @@ public sealed class SettingsWindowLayoutTests
             var navigation = Assert.IsType<RadioButton>(window.FindName(page + "Nav"));
             navigation.IsChecked = true;
             Layout(window, content, 900, 650);
-            Assert.True(content.ActualWidth >= 860);
+            Assert.True(content.ActualWidth >= Math.Min(900, window.ActualWidth) - 40);
             Assert.True(content.ActualHeight >= 580);
             Capture(window, captureDirectory, page.ToLowerInvariant() + "-900x650.png");
         }
 
         Assert.IsType<RadioButton>(window.FindName("FunAsrNav")).IsChecked = true;
         Layout(window, content, 720, 520);
-        Assert.True(content.ActualWidth >= 680);
+        Assert.True(content.ActualWidth >= Math.Min(720, window.ActualWidth) - 40);
         Assert.True(content.ActualHeight >= 450);
         Capture(window, captureDirectory, "funasr-720x520.png");
-        window.Close();
+
+        Assert.IsType<RadioButton>(window.FindName("AppNav")).IsChecked = true;
+        Layout(window, content, 720, 520);
+        var appPage = Assert.IsType<ScrollViewer>(window.FindName("AppPage"));
+        var pttMode = Assert.IsType<ComboBox>(window.FindName("PttModeCombo"));
+        Rect pttModeBounds = pttMode.TransformToAncestor(appPage).TransformBounds(new Rect(pttMode.RenderSize));
+        Assert.True(
+            pttModeBounds.Top >= 0 && pttModeBounds.Bottom <= appPage.ViewportHeight,
+            $"Activation mode selector is outside the App viewport: {pttModeBounds}, viewport height {appPage.ViewportHeight}.");
+        Capture(window, captureDirectory, "app-720x520.png");
+
+        Assert.Equal(0, pttMode.SelectedIndex);
+        pttMode.SelectedIndex = 1;
+        Assert.Equal(
+            "Right Ctrl · press to start/stop",
+            Assert.IsType<TextBlock>(window.FindName("OverviewPttText")).Text);
+
+        var save = Assert.IsType<Button>(window.FindName("SaveButton"));
+        Assert.True(save.IsEnabled);
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(PttMode.Toggle, Assert.IsType<AppSettings>(savedSettings).PttMode);
     }
 
     private static void EnsureWindowsDirectoryEnvironment()

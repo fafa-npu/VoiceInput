@@ -56,6 +56,7 @@ public sealed class SettingsStore
                 OnboardingCompleted = dto.OnboardingCompleted,
                 Language = dto.Language,
                 PttKey = dto.PttKey,
+                PttMode = dto.PttMode,
                 Engine = dto.Engine,
                 FunAsrModelId = FunAsrModelCatalog.NormalizeId(dto.FunAsrModelId),
                 AzureRegion = dto.AzureRegion,
@@ -94,6 +95,7 @@ public sealed class SettingsStore
             OnboardingCompleted = s.OnboardingCompleted,
             Language = s.Language,
             PttKey = s.PttKey,
+            PttMode = s.PttMode,
             Engine = s.Engine,
             FunAsrModelId = FunAsrModelCatalog.NormalizeId(s.FunAsrModelId),
             AzureRegion = s.AzureRegion,
@@ -168,6 +170,7 @@ public sealed class SettingsStore
         public bool OnboardingCompleted { get; set; } = true;
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
+        public PttMode PttMode { get; set; } = PttMode.Hold;
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
         public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
         public string AzureRegion { get; set; } = "eastasia";

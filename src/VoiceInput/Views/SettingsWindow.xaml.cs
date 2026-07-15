@@ -73,6 +73,7 @@ public partial class SettingsWindow : Window
         LlmModelBox.Text = _draft.LlmModel;
         LlmPromptBox.Text = _draft.LlmPrompt;
         LanguageCombo.SelectedValue = _draft.Language;
+        PttModeCombo.SelectedIndex = _draft.PttMode == PttMode.Toggle ? 1 : 0;
         PttCombo.SelectedValue = _draft.PttKey;
         UseContextBox.IsChecked = _draft.UseContext;
         LearnFromEditsBox.IsChecked = _draft.LearnFromEdits;
@@ -111,6 +112,7 @@ public partial class SettingsWindow : Window
             box.PasswordChanged += OnDraftValueChanged;
 
         LanguageCombo.SelectionChanged += OnDraftValueChanged;
+        PttModeCombo.SelectionChanged += OnDraftValueChanged;
         PttCombo.SelectionChanged += OnDraftValueChanged;
         LlmEnabledBox.Click += OnDraftValueChanged;
         UseContextBox.Click += OnSensitiveSettingChanged;
@@ -243,6 +245,7 @@ public partial class SettingsWindow : Window
         _draft.LlmModel = LlmModelBox.Text.Trim();
         _draft.LlmPrompt = LlmPromptBox.Text.Trim();
         _draft.Language = LanguageCombo.SelectedValue as string ?? _draft.Language;
+        _draft.PttMode = PttModeCombo.SelectedIndex == 1 ? PttMode.Toggle : PttMode.Hold;
         _draft.PttKey = PttCombo.SelectedValue as string ?? _draft.PttKey;
         _draft.UseContext = UseContextBox.IsChecked == true;
         _draft.LearnFromEdits = LearnFromEditsBox.IsChecked == true;
@@ -271,7 +274,8 @@ public partial class SettingsWindow : Window
         OverviewLocalStatusText.Text = installedCount == 0
             ? "Not installed"
             : $"{installedCount} of {FunAsrModelCatalog.Models.Count} installed";
-        OverviewPttText.Text = PttDisplay(_draft.PttKey);
+        string pttBehavior = _draft.PttMode == PttMode.Toggle ? "press to start/stop" : "hold to talk";
+        OverviewPttText.Text = $"{PttDisplay(_draft.PttKey)} · {pttBehavior}";
         OverviewLanguageText.Text = LanguageDisplay(_draft.Language);
 
         if (_draft.Engine == SpeechEngineKind.FunAsr && !localReady)
@@ -854,6 +858,7 @@ public partial class SettingsWindow : Window
     private static bool SettingsEqual(AppSettings left, AppSettings right) =>
         left.Language == right.Language
         && left.PttKey == right.PttKey
+        && left.PttMode == right.PttMode
         && left.Engine == right.Engine
         && left.FunAsrModelId == right.FunAsrModelId
         && left.AzureKey == right.AzureKey

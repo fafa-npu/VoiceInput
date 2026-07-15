@@ -29,6 +29,7 @@ public sealed class KeyboardHook : IDisposable
     public event Action? Submitted;
 
     private readonly LowLevelKeyboardProc _proc;   // kept alive in a field so the GC can't collect it
+    private readonly Func<int, short> _getAsyncKeyState;
     private IntPtr _hook = IntPtr.Zero;
     private IntPtr _moduleHandle = IntPtr.Zero;
     private DispatcherTimer? _watchdog;
@@ -38,8 +39,14 @@ public sealed class KeyboardHook : IDisposable
     private bool _chorded;
 
     public KeyboardHook(string pttKey)
+        : this(pttKey, GetAsyncKeyState)
+    {
+    }
+
+    internal KeyboardHook(string pttKey, Func<int, short> getAsyncKeyState)
     {
         _pttVk = ResolveVk(pttKey);
+        _getAsyncKeyState = getAsyncKeyState;
         _proc = HookCallback;
     }
 
@@ -74,9 +81,17 @@ public sealed class KeyboardHook : IDisposable
         int msg = (int)wParam;
         bool isDown = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
         bool isUp = msg is WM_KEYUP or WM_SYSKEYUP;
-        bool isPtt = (int)data.vkCode == _pttVk;
 
-        if (isDown && (int)data.vkCode == VK_RETURN)
+        ProcessKeyEvent((int)data.vkCode, isDown, isUp);
+
+        return CallNextHookEx(_hook, nCode, wParam, lParam);
+    }
+
+    internal void ProcessKeyEvent(int vkCode, bool isDown, bool isUp)
+    {
+        bool isPtt = vkCode == _pttVk;
+
+        if (isDown && vkCode == VK_RETURN)
             Submitted?.Invoke();
 
         if (isDown)
@@ -86,8 +101,9 @@ public sealed class KeyboardHook : IDisposable
                 if (!_pttDown)
                 {
                     _pttDown = true;
-                    _chorded = false;
-                    Engaged?.Invoke();
+                    _chorded = HasOtherHeldKey();
+                    if (!_chorded)
+                        Engaged?.Invoke();
                 }
                 // else: auto-repeat key-down while held — ignore.
             }
@@ -105,15 +121,37 @@ public sealed class KeyboardHook : IDisposable
             _chorded = false;
         }
 
-        return CallNextHookEx(_hook, nCode, wParam, lParam);
     }
+
+    private bool HasOtherHeldKey()
+    {
+        int genericPttVk = GenericModifierFor(_pttVk);
+        for (int vkCode = 0x08; vkCode <= 0xFE; vkCode++)
+        {
+            if (vkCode == _pttVk || vkCode == genericPttVk)
+                continue;
+
+            if ((_getAsyncKeyState(vkCode) & 0x8000) != 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static int GenericModifierFor(int vkCode) => vkCode switch
+    {
+        VK_LCONTROL or VK_RCONTROL => VK_CONTROL,
+        VK_RSHIFT => VK_SHIFT,
+        VK_RMENU => VK_MENU,
+        _ => vkCode,
+    };
 
     private void Watchdog(object? sender, EventArgs e)
     {
         if (_pttDown)
         {
             // Reconcile a key-up the hook never saw (secure desktop, focus loss, another hook).
-            bool physicallyDown = (GetAsyncKeyState(_pttVk) & 0x8000) != 0;
+            bool physicallyDown = (_getAsyncKeyState(_pttVk) & 0x8000) != 0;
             if (!physicallyDown)
             {
                 bool fireReleased = !_chorded;

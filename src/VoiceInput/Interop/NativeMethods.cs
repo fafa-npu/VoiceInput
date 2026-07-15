@@ -23,7 +23,9 @@ internal static class NativeMethods
     public const int VK_RMENU = 0xA5;   // Right Alt
     public const int VK_RSHIFT = 0xA1;
     public const int VK_CAPITAL = 0x14; // Caps Lock
+    public const int VK_SHIFT = 0x10;
     public const int VK_CONTROL = 0x11;
+    public const int VK_MENU = 0x12;
     public const int VK_V = 0x56;
     public const int VK_RETURN = 0x0D;
 

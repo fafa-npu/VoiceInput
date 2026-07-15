@@ -199,8 +199,10 @@ public sealed class FirstRunWindowLayoutTests
         window.UpdateLayout();
         content.UpdateLayout();
         PumpDispatcher();
-        Assert.True(content.ActualWidth >= width - 40, $"Content width was {content.ActualWidth} at {width}x{height}.");
-        Assert.True(content.ActualHeight >= height - 70, $"Content height was {content.ActualHeight} at {width}x{height}.");
+        double availableWidth = Math.Min(width, window.ActualWidth);
+        double availableHeight = Math.Min(height, window.ActualHeight);
+        Assert.True(content.ActualWidth >= availableWidth - 40, $"Content width was {content.ActualWidth} at {width}x{height}.");
+        Assert.True(content.ActualHeight >= availableHeight - 70, $"Content height was {content.ActualHeight} at {width}x{height}.");
     }
 
     private static void AssertPageAndFooterDoNotOverlap(

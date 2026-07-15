@@ -38,7 +38,7 @@ function New-AppShortcut($path) {
     $lnk = $shell.CreateShortcut($path)
     $lnk.TargetPath       = Join-Path $InstallDir $ExeName
     $lnk.WorkingDirectory = $InstallDir
-    $lnk.Description       = 'VoiceInput - hold-to-talk voice input'
+    $lnk.Description       = 'VoiceInput - voice input for Windows'
     $lnk.Save()
 }
 
@@ -126,6 +126,6 @@ Write-Host 'Auto-start enabled (runs at login); Start Menu entry created.' -Fore
 
 if (-not $NoLaunch) {
     Start-Process (Join-Path $InstallDir $ExeName)
-    Write-Host 'VoiceInput is running - hold Right Ctrl to talk. Tray icon (blue mic) is bottom-right.' -ForegroundColor Green
+    Write-Host 'VoiceInput is running. Configure the activation mode and key under Settings > App.' -ForegroundColor Green
 }
 Write-Host "Uninstall any time: powershell -File `"$InstallDir\uninstall.ps1`" -Uninstall"

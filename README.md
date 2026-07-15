@@ -1,8 +1,8 @@
 # VoiceInput (Windows)
 
-A system-tray, hold-to-talk voice input method for Windows. Hold a key, speak, and release:
-VoiceInput transcribes the recording and inserts it only if the original window and input control
-still have focus.
+A system-tray voice input method for Windows. Hold a key while speaking, or press once to start
+and again to stop. VoiceInput transcribes the recording and inserts it only if the original window
+and input control still have focus.
 
 Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
@@ -25,9 +25,10 @@ layer** can be configured for:
 
 ## Features
 
-- **Hold-to-talk.** Hold the push-to-talk key (default **Right Ctrl**, rebindable) to record;
-  release to transcribe and inject. Chord-aware (Right-Ctrl+C still works); a watchdog recovers a
-  missed key-up (UAC / lock screen).
+- **Two activation modes.** **Hold to talk** is the default: hold the activation key (default
+  **Right Ctrl**, rebindable), then release to transcribe. Or select **Press to start / stop** and
+  press the key once to listen and again to transcribe. Both modes are chord-aware, so shortcuts
+  such as Right-Ctrl+C still work; a watchdog recovers a missed key-up (UAC / lock screen).
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
 - **Guided first run.** A two-step setup window teaches the real focused-text-box workflow, then
@@ -53,7 +54,7 @@ layer** can be configured for:
 
 | Action                   | How                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------ |
-| **Talk**                 | Hold **Right Ctrl** (rebindable: tray → Push-to-talk key), speak, release            |
+| **Talk**                 | Hold **Right Ctrl**, or select press-to-start/stop under Settings → App              |
 | **Start**                | Start Menu → **VoiceInput**, or it auto-starts at login                              |
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
@@ -108,7 +109,7 @@ this release link to the [Apache 2.0 license](https://www.apache.org/licenses/LI
 
 Tray → **Settings…** opens the Setup Hub. Speech contains engine and cloud authentication settings;
 FunASR manages local models; Refinement contains the OpenAI-compatible Base URL, key, model, and
-custom prompt; App contains language, push-to-talk, privacy, startup, update, and logging controls.
+custom prompt; App contains language, activation mode and key, privacy, startup, update, and logging controls.
 Secret fields are DPAPI-encrypted per Windows user in `%APPDATA%\VoiceInput\settings.json`.
 
 ## Build (developers)

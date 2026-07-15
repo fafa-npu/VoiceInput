@@ -22,6 +22,12 @@ public enum AzureAuthMode
     EntraId,
 }
 
+public enum PttMode
+{
+    Hold,
+    Toggle,
+}
+
 /// <summary>
 /// In-memory application settings. Secrets (Azure key, LLM key) are held in plaintext here
 /// but are DPAPI-encrypted at rest by <see cref="Services.SettingsStore"/>.
@@ -34,8 +40,11 @@ public sealed class AppSettings
     /// <summary>Recognition language. Default Simplified Chinese so it works out of the box for zh-CN.</summary>
     public string Language { get; set; } = "zh-CN";
 
-    /// <summary>Push-to-talk key. One of: RightCtrl, CapsLock, RightAlt, RightShift.</summary>
+    /// <summary>Activation key. One of: RightCtrl, LeftCtrl, CapsLock, RightAlt, RightShift.</summary>
     public string PttKey { get; set; } = "RightCtrl";
+
+    /// <summary>Whether the activation key is held while speaking or toggles recording on each press.</summary>
+    public PttMode PttMode { get; set; } = PttMode.Hold;
 
     public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
 

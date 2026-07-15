@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VoiceInput.Models;
 using VoiceInput.Services;
 
@@ -26,6 +27,7 @@ public sealed class SettingsStoreTests : IDisposable
             OnboardingCompleted = true,
             Language = "en-US",
             PttKey = "CapsLock",
+            PttMode = PttMode.Toggle,
             Engine = SpeechEngineKind.FunAsr,
             FunAsrModelId = "paraformer-zh-q8",
             LlmEnabled = true,
@@ -34,11 +36,14 @@ public sealed class SettingsStoreTests : IDisposable
 
         store.Save(settings);
         AppSettings loaded = store.Load();
+        using JsonDocument savedJson = JsonDocument.Parse(File.ReadAllText(path));
 
         Assert.True(store.Exists);
+        Assert.Equal("Toggle", savedJson.RootElement.GetProperty("PttMode").GetString());
         Assert.True(loaded.OnboardingCompleted);
         Assert.Equal("en-US", loaded.Language);
         Assert.Equal("CapsLock", loaded.PttKey);
+        Assert.Equal(PttMode.Toggle, loaded.PttMode);
         Assert.Equal(SpeechEngineKind.FunAsr, loaded.Engine);
         Assert.Equal("paraformer-zh-q8", loaded.FunAsrModelId);
         Assert.True(loaded.LlmEnabled);
@@ -75,6 +80,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal(SpeechEngineKind.GptTranscribe, loaded.Engine);
         Assert.Equal(FunAsrModelCatalog.DefaultId, loaded.FunAsrModelId);
+        Assert.Equal(PttMode.Hold, loaded.PttMode);
         Assert.True(loaded.OnboardingCompleted);
     }
 
