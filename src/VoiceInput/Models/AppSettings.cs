@@ -28,6 +28,9 @@ public enum AzureAuthMode
 /// </summary>
 public sealed class AppSettings
 {
+    /// <summary>False until a new user completes or explicitly skips the first-run guide.</summary>
+    public bool OnboardingCompleted { get; set; }
+
     /// <summary>Recognition language. Default Simplified Chinese so it works out of the box for zh-CN.</summary>
     public string Language { get; set; } = "zh-CN";
 

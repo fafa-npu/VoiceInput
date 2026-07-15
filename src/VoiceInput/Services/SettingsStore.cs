@@ -53,6 +53,7 @@ public sealed class SettingsStore
 
             return new AppSettings
             {
+                OnboardingCompleted = dto.OnboardingCompleted,
                 Language = dto.Language,
                 PttKey = dto.PttKey,
                 Engine = dto.Engine,
@@ -90,6 +91,7 @@ public sealed class SettingsStore
         Directory.CreateDirectory(_dir);
         var dto = new PersistedSettings
         {
+            OnboardingCompleted = s.OnboardingCompleted,
             Language = s.Language,
             PttKey = s.PttKey,
             Engine = s.Engine,
@@ -162,6 +164,8 @@ public sealed class SettingsStore
     /// <summary>On-disk shape. Secret fields hold DPAPI base64, never plaintext.</summary>
     private sealed class PersistedSettings
     {
+        // Missing on settings written before the onboarding feature; existing users stay completed.
+        public bool OnboardingCompleted { get; set; } = true;
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;

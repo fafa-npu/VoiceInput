@@ -30,6 +30,8 @@ layer** can be configured for:
   missed key-up (UAC / lock screen).
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
+- **Guided first run.** A two-step setup window teaches the real focused-text-box workflow, then
+  shows where VoiceInput stays in the system tray and where optional engines and models are configured.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
 - **Four speech engines:** **Windows dictation** (may use Microsoft's online speech service),
   **Azure Speech** (streaming), **gpt-4o-transcribe** via **Azure AI Foundry** (batch), and

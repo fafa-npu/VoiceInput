@@ -8,12 +8,22 @@ public sealed class SettingsStoreTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void FreshSettingsRequireOnboarding()
+    {
+        var store = new SettingsStore(Path.Combine(_directory, "settings.json"));
+
+        Assert.False(store.Exists);
+        Assert.False(store.Load().OnboardingCompleted);
+    }
+
+    [Fact]
     public void RoundTripsNonSecretSettings()
     {
         string path = Path.Combine(_directory, "settings.json");
         var store = new SettingsStore(path);
         var settings = new AppSettings
         {
+            OnboardingCompleted = true,
             Language = "en-US",
             PttKey = "CapsLock",
             Engine = SpeechEngineKind.FunAsr,
@@ -26,6 +36,7 @@ public sealed class SettingsStoreTests : IDisposable
         AppSettings loaded = store.Load();
 
         Assert.True(store.Exists);
+        Assert.True(loaded.OnboardingCompleted);
         Assert.Equal("en-US", loaded.Language);
         Assert.Equal("CapsLock", loaded.PttKey);
         Assert.Equal(SpeechEngineKind.FunAsr, loaded.Engine);
@@ -48,7 +59,7 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void OldSettingsKeepExistingEngineAndDefaultFunAsrModel()
+    public void OldSettingsKeepExistingEngineDefaultsAndCompletedOnboarding()
     {
         string path = Path.Combine(_directory, "settings.json");
         Directory.CreateDirectory(_directory);
@@ -64,6 +75,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal(SpeechEngineKind.GptTranscribe, loaded.Engine);
         Assert.Equal(FunAsrModelCatalog.DefaultId, loaded.FunAsrModelId);
+        Assert.True(loaded.OnboardingCompleted);
     }
 
     public void Dispose()

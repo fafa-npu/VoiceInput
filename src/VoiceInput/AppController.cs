@@ -37,6 +37,7 @@ public sealed class AppController : IDisposable
     private string? _availableAssetSha256;
 
     private OverlayWindow? _overlay;
+    private FirstRunWindow? _firstRunWindow;
     private WinForms.NotifyIcon? _tray;
     private System.Drawing.Icon? _trayIcon;
 
@@ -85,39 +86,27 @@ public sealed class AppController : IDisposable
 
     public void Start()
     {
-        bool firstRun = !_store.Exists;   // capture before anything writes the settings file
-
         _overlay = new OverlayWindow { LevelSource = () => _level };
         BuildTray();
         _hook.Install();
         Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
-        if (firstRun) ShowFirstRunOnboarding();
+        if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
 
         _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
         _ = PrewarmEntraAsync();                  // sign in once up front so dictation never triggers a focus-stealing popup
     }
 
     /// <summary>
-    /// First launch on a machine: the app is tray-only, so a new user sees "nothing happen" after
-    /// double-clicking the exe. Make it obvious it's running, explain the push-to-talk key, and open
-    /// Settings so they can pick a speech engine right away. Persist defaults so this shows only once.
+    /// First launch on a machine: persist safe defaults, then teach the real push-to-talk flow.
+    /// Closing the guide does not mark it complete, so the tray keeps a recovery entry.
     /// </summary>
     private void ShowFirstRunOnboarding()
     {
         Log.Write("First run — showing onboarding.");
-        Persist();   // write settings.json now so onboarding doesn't reappear on every launch
-
-        Notify("VoiceInput is running",
-            $"It lives in the system tray (blue mic, bottom-right) — there's no main window. " +
-            $"Hold {PttDisplay(_settings.PttKey)} to talk, release to type. VoiceInput observes the global PTT key " +
-            "but does not save ordinary keystrokes. Windows recognition may use Microsoft's online speech service; " +
-            "Azure/Foundry send audio to your configured cloud. Optional UIA context sends visible app text to your LLM, " +
-            "and edit learning stores encrypted correction samples locally. All optional privacy features start off.");
-
-        // Give the tray balloon a moment to appear before the window steals attention.
-        _ui.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(OpenSettings));
+        Persist();
+        _ui.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(OpenFirstRun));
     }
 
     /// <summary>
@@ -610,9 +599,28 @@ public sealed class AppController : IDisposable
         _ => key,
     };
 
+    private static string EngineDisplay(SpeechEngineKind engine) => engine switch
+    {
+        SpeechEngineKind.Azure => "Azure Speech",
+        SpeechEngineKind.GptTranscribe => "GPT-4o Transcribe",
+        SpeechEngineKind.FunAsr => "FunASR 本地",
+        _ => "Windows 听写",
+    };
+
+    private static string LanguageDisplay(string language) =>
+        AppSettings.SupportedLanguages.FirstOrDefault(item => item.Code == language).Display ?? language;
+
     private void RebuildMenu()
     {
         var menu = new WinForms.ContextMenuStrip();
+
+        if (!_settings.OnboardingCompleted)
+        {
+            var setup = new WinForms.ToolStripMenuItem("完成快速设置…");
+            setup.Click += (_, _) => OpenFirstRun();
+            menu.Items.Add(setup);
+            menu.Items.Add(new WinForms.ToolStripSeparator());
+        }
 
         if (!string.IsNullOrEmpty(_pendingText))
         {
@@ -652,6 +660,40 @@ public sealed class AppController : IDisposable
         menu.Items.Add(quit);
 
         _tray!.ContextMenuStrip = menu;
+    }
+
+    private void OpenFirstRun()
+    {
+        if (_firstRunWindow is { IsVisible: true })
+        {
+            _firstRunWindow.Activate();
+            return;
+        }
+
+        var window = new FirstRunWindow(
+            _settings.PttKey,
+            PttDisplay(_settings.PttKey),
+            $"{EngineDisplay(_settings.Engine)} · {LanguageDisplay(_settings.Language)} · " +
+            $"{PttDisplay(_settings.PttKey)} · 模型按需下载",
+            CompleteOnboarding,
+            OpenSettings);
+        _firstRunWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_firstRunWindow, window))
+                _firstRunWindow = null;
+        };
+        window.Show();
+        window.Activate();
+    }
+
+    private void CompleteOnboarding()
+    {
+        if (_settings.OnboardingCompleted) return;
+        _settings.OnboardingCompleted = true;
+        Persist();
+        RebuildMenu();
+        Log.Write("First-run onboarding completed.");
     }
 
     private void OpenSettings()
@@ -888,6 +930,7 @@ public sealed class AppController : IDisposable
 
     public void Dispose()
     {
+        _firstRunWindow?.Close();
         Task? installTask;
         lock (_funAsrInstallLock)
         {
