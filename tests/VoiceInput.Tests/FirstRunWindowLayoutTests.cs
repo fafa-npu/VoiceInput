@@ -2,10 +2,13 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using VoiceInput.Models;
+using VoiceInput.Services;
 using VoiceInput.Views;
 
 namespace VoiceInput.Tests;
@@ -18,7 +21,9 @@ public sealed class FirstRunWindowLayoutTests
         RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
         int completed = 0;
         int settingsOpened = 0;
-        var window = CreateWindow(() => completed++, () => settingsOpened++);
+        var window = CreateWindow(
+            _ => { completed++; return true; },
+            () => settingsOpened++);
         window.Show();
 
         try
@@ -39,6 +44,17 @@ public sealed class FirstRunWindowLayoutTests
                 "PracticeAgainButton",
                 "PracticeFooter",
                 "CompletionFooter",
+                "LocalModelSetupPanel",
+                "InstallLocalModelButton",
+                "CancelLocalModelInstallButton",
+                "LocalModelProgressBar",
+                "LocalModelProgressText",
+                "HoldModeRadio",
+                "ToggleModeRadio",
+                "LocalModelInlineStatusText",
+                "FocusStepNumberText",
+                "TalkStepNumberText",
+                "ReleaseStepNumberText",
             ];
             string[] missing = names.Where(name => window.FindName(name) is null).ToArray();
             Assert.True(missing.Length == 0, $"Missing named elements: {string.Join(", ", missing)}");
@@ -97,53 +113,394 @@ public sealed class FirstRunWindowLayoutTests
     });
 
     [Fact]
+    public void GuideLetsTheUserChooseActivationModeBeforePractice() => RunOnSta(() =>
+    {
+        var selectedModes = new List<PttMode>();
+        var window = CreateWindow(
+            pttMode: PttMode.Hold,
+            setPttMode: selectedModes.Add);
+        window.Show();
+
+        try
+        {
+            var hold = Assert.IsType<RadioButton>(window.FindName("HoldModeRadio"));
+            var toggle = Assert.IsType<RadioButton>(window.FindName("ToggleModeRadio"));
+            Assert.True(hold.IsChecked);
+            Assert.False(toggle.IsChecked);
+
+            toggle.IsChecked = true;
+            PumpDispatcher();
+
+            Assert.Equal([PttMode.Toggle], selectedModes);
+            Assert.Contains("按一下", Assert.IsType<TextBlock>(window.FindName("PracticePttStepText")).Text);
+            Assert.False(Assert.IsType<Button>(window.FindName("ContinueButton")).IsEnabled);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void ToggleModeExplainsAndTracksTwoPresses() => RunOnSta(() =>
+    {
+        var window = CreateWindow(pttMode: PttMode.Toggle);
+        window.Show();
+
+        try
+        {
+            var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+            var practiceText = Assert.IsType<TextBox>(window.FindName("PracticeTextBox"));
+            var listeningBars = Assert.IsType<StackPanel>(window.FindName("ListeningBars"));
+            var status = Assert.IsType<TextBlock>(window.FindName("PracticeStatusText"));
+            var focusNumber = Assert.IsType<TextBlock>(window.FindName("FocusStepNumberText"));
+            var talkNumber = Assert.IsType<TextBlock>(window.FindName("TalkStepNumberText"));
+            var releaseNumber = Assert.IsType<TextBlock>(window.FindName("ReleaseStepNumberText"));
+            string? captureDirectory = Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR");
+            Assert.Contains("按一下", Assert.IsType<TextBlock>(window.FindName("PracticePttStepText")).Text);
+            Assert.Contains("再按一下", Assert.IsType<TextBlock>(window.FindName("PracticeReleaseStepText")).Text);
+            Assert.Equal("1", focusNumber.Text);
+            Layout(window, content, 720, 560);
+
+            practiceText.Focus();
+            PumpDispatcher();
+            Assert.Equal("✓", focusNumber.Text);
+            Assert.Equal("2", talkNumber.Text);
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.RightCtrl);
+            RaiseKey(window, Keyboard.PreviewKeyUpEvent, Key.RightCtrl);
+            PumpDispatcher();
+
+            Assert.Equal(Visibility.Visible, listeningBars.Visibility);
+            Assert.Contains("正在聆听", status.Text);
+            Capture(window, captureDirectory, "first-run-toggle-listening-720x560.png");
+
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.RightCtrl);
+            RaiseKey(window, Keyboard.PreviewKeyUpEvent, Key.RightCtrl);
+            PumpDispatcher();
+
+            Assert.Equal(Visibility.Collapsed, listeningBars.Visibility);
+            Assert.Contains("正在处理", status.Text);
+            Assert.Equal("✓", talkNumber.Text);
+            Assert.Equal("3", releaseNumber.Text);
+
+            practiceText.Text = "Toggle mode completed.";
+            PumpDispatcher();
+            Assert.Equal("✓", releaseNumber.Text);
+            Capture(window, captureDirectory, "first-run-toggle-complete-720x560.png");
+
+            practiceText.Clear();
+            PumpDispatcher();
+            Assert.Equal("2", talkNumber.Text);
+            Assert.Equal("3", releaseNumber.Text);
+            Assert.False(Assert.IsType<Button>(window.FindName("ContinueButton")).IsEnabled);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void ToggleModeIgnoresAKeyUpWhenKeyDownWasRejected() => RunOnSta(() =>
+    {
+        var window = CreateWindow(pttMode: PttMode.Toggle);
+        window.Show();
+
+        try
+        {
+            var listeningBars = Assert.IsType<StackPanel>(window.FindName("ListeningBars"));
+            var focusNumber = Assert.IsType<TextBlock>(window.FindName("FocusStepNumberText"));
+
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.RightCtrl);
+            RaiseKey(window, Keyboard.PreviewKeyUpEvent, Key.RightCtrl);
+            PumpDispatcher();
+
+            Assert.Equal(Visibility.Collapsed, listeningBars.Visibility);
+            Assert.Equal("1", focusNumber.Text);
+            Assert.DoesNotContain(
+                "正在聆听",
+                Assert.IsType<TextBlock>(window.FindName("PracticeStatusText")).Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void ToggleModeIgnoresAChordedPttCycle() => RunOnSta(() =>
+    {
+        var window = CreateWindow(pttMode: PttMode.Toggle);
+        window.Show();
+
+        try
+        {
+            var practiceText = Assert.IsType<TextBox>(window.FindName("PracticeTextBox"));
+            var listeningBars = Assert.IsType<StackPanel>(window.FindName("ListeningBars"));
+            var talkNumber = Assert.IsType<TextBlock>(window.FindName("TalkStepNumberText"));
+
+            practiceText.Focus();
+            PumpDispatcher();
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.RightCtrl);
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.C);
+            RaiseKey(window, Keyboard.PreviewKeyUpEvent, Key.RightCtrl);
+            PumpDispatcher();
+
+            Assert.Equal(Visibility.Collapsed, listeningBars.Visibility);
+            Assert.Equal("2", talkNumber.Text);
+            Assert.DoesNotContain(
+                "正在聆听",
+                Assert.IsType<TextBlock>(window.FindName("PracticeStatusText")).Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void ToggleModeIgnoresAPreHeldChord() => RunOnSta(() =>
+    {
+        var window = CreateWindow(
+            pttMode: PttMode.Toggle,
+            isPttGestureChorded: () => true);
+        window.Show();
+
+        try
+        {
+            var practiceText = Assert.IsType<TextBox>(window.FindName("PracticeTextBox"));
+            var listeningBars = Assert.IsType<StackPanel>(window.FindName("ListeningBars"));
+
+            practiceText.Focus();
+            PumpDispatcher();
+            RaiseKey(window, Keyboard.PreviewKeyDownEvent, Key.RightCtrl);
+            RaiseKey(window, Keyboard.PreviewKeyUpEvent, Key.RightCtrl);
+            PumpDispatcher();
+
+            Assert.Equal(Visibility.Collapsed, listeningBars.Visibility);
+            Assert.DoesNotContain(
+                "正在聆听",
+                Assert.IsType<TextBlock>(window.FindName("PracticeStatusText")).Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void GuideInstallsTheDefaultLocalModelBeforePractice() => RunOnSta(() =>
+    {
+        int installs = 0;
+        var installed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var window = CreateWindow(
+            localModelInstalled: false,
+            pttMode: PttMode.Toggle,
+            installLocalModel: report =>
+            {
+                installs++;
+                report(new(
+                    FunAsrModelCatalog.DefaultId,
+                    FunAsrInstallStage.Downloading,
+                    "sensevoice-small-q8.gguf",
+                    127_000_000,
+                    254_000_000));
+                return installed.Task;
+            });
+        window.Show();
+
+        try
+        {
+            var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+            var practiceText = Assert.IsType<TextBox>(window.FindName("PracticeTextBox"));
+            var continueButton = Assert.IsType<Button>(window.FindName("ContinueButton"));
+            var installButton = Assert.IsType<Button>(window.FindName("InstallLocalModelButton"));
+            var setupPanel = Assert.IsType<Border>(window.FindName("LocalModelSetupPanel"));
+            string? captureDirectory = Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR");
+
+            Assert.False(practiceText.IsEnabled);
+            Assert.False(continueButton.IsEnabled);
+            Assert.Equal(Visibility.Visible, setupPanel.Visibility);
+            Assert.Contains("SenseVoiceSmall", Assert.IsType<TextBlock>(window.FindName("LocalModelStatusText")).Text);
+            Layout(window, content, 720, 560);
+            Capture(window, captureDirectory, "first-run-local-download-720x560.png");
+
+            installButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpDispatcher();
+
+            Assert.Equal(1, installs);
+            var progress = Assert.IsType<ProgressBar>(window.FindName("LocalModelProgressBar"));
+            Assert.Equal(Visibility.Visible, progress.Visibility);
+            Assert.Equal(50, progress.Value);
+            Assert.Contains("127.0 MB / 254.0 MB", Assert.IsType<TextBlock>(window.FindName("LocalModelProgressText")).Text);
+            Capture(window, captureDirectory, "first-run-local-progress-720x560.png");
+
+            installed.SetResult();
+            PumpDispatcherUntil(() => practiceText.IsEnabled);
+
+            Assert.True(practiceText.IsEnabled);
+            Assert.Contains("已就绪", Assert.IsType<TextBlock>(window.FindName("LocalModelTitleText")).Text);
+            Assert.Equal(Visibility.Collapsed, installButton.Visibility);
+            Assert.Equal(Visibility.Collapsed, setupPanel.Visibility);
+            Assert.Contains("已就绪", Assert.IsType<TextBlock>(window.FindName("LocalModelInlineStatusText")).Text);
+            Assert.Contains("按一下", Assert.IsType<TextBlock>(window.FindName("PracticeStatusDetailText")).Text);
+            Capture(window, captureDirectory, "first-run-local-ready-720x560.png");
+
+            practiceText.Text = "本地模型已经可以识别。";
+            PumpDispatcher();
+            Assert.True(continueButton.IsEnabled);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
+    public void GuidePreservesAndTestsRecognitionChosenInFullSettings() => RunOnSta(() =>
+    {
+        FirstRunCompletionChoice? completedWith = null;
+        var window = CreateWindow(
+            complete: choice => { completedWith = choice; return true; },
+            useConfiguredRecognition: true,
+            recognitionSummary: "GPT-4o Transcribe 已配置");
+        window.Show();
+
+        try
+        {
+            var practiceText = Assert.IsType<TextBox>(window.FindName("PracticeTextBox"));
+            Assert.True(practiceText.IsEnabled);
+            Assert.Equal(
+                Visibility.Collapsed,
+                Assert.IsType<Border>(window.FindName("LocalModelSetupPanel")).Visibility);
+            Assert.Contains(
+                "GPT-4o Transcribe",
+                Assert.IsType<TextBlock>(window.FindName("LocalModelInlineStatusText")).Text);
+
+            Assert.IsType<Button>(window.FindName("SkipButton"))
+                .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            Assert.Equal(FirstRunCompletionChoice.Configured, completedWith);
+            Assert.False(window.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    });
+
+    [Fact]
     public void GuideCompletesOnlyForExplicitExitActions() => RunOnSta(() =>
     {
         var calls = new List<string>();
-        var closeOnly = CreateWindow(() => calls.Add("complete"), () => calls.Add("settings"));
+        var closeOnly = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return true; },
+            () => calls.Add("settings"));
         closeOnly.Show();
         closeOnly.Close();
         Assert.Empty(calls);
 
-        var skip = CreateWindow(() => calls.Add("complete"), () => calls.Add("settings"));
+        var skip = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return true; },
+            () => calls.Add("settings"));
         skip.Show();
         Assert.IsType<Button>(skip.FindName("SkipButton"))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Assert.Equal(["complete"], calls);
+        Assert.Equal(["DefaultLocal"], calls);
         Assert.False(skip.IsVisible);
 
         calls.Clear();
-        var finish = CreateWindow(() => calls.Add("complete"), () => calls.Add("settings"));
+        var finish = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return true; },
+            () => calls.Add("settings"));
         finish.Show();
         Assert.IsType<TextBox>(finish.FindName("PracticeTextBox")).Text = "Done";
         Assert.IsType<Button>(finish.FindName("ContinueButton"))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Assert.IsType<Button>(finish.FindName("FinishButton"))
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Assert.Equal(["complete"], calls);
+        Assert.Equal(["DefaultLocal"], calls);
         Assert.False(finish.IsVisible);
 
         calls.Clear();
         FirstRunWindow? settings = null;
         settings = CreateWindow(
-            () => calls.Add("complete"),
+            choice => { calls.Add(choice.ToString()); return true; },
             () =>
             {
-                Assert.False(settings!.IsVisible);
+                Assert.True(settings!.IsVisible);
                 calls.Add("settings");
             });
         settings.Show();
         Assert.IsType<Hyperlink>(settings.FindName("OpenSettingsLink"))
             .RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));
-        Assert.Equal(["complete", "settings"], calls);
+        Assert.Equal(["settings"], calls);
+        settings.Close();
+
+        calls.Clear();
+        int warnings = 0;
+        var warningRejected = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return true; },
+            () => calls.Add("settings"),
+            localModelInstalled: false,
+            confirmWindowsFallback: () => { warnings++; return false; });
+        warningRejected.Show();
+        var warningSkip = Assert.IsType<Button>(warningRejected.FindName("SkipButton"));
+        Assert.Contains("准确率较低", warningSkip.Content?.ToString());
+        warningSkip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(1, warnings);
+        Assert.Empty(calls);
+        Assert.True(warningRejected.IsVisible);
+        warningRejected.Close();
+
+        calls.Clear();
+        var useWindows = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return true; },
+            () => calls.Add("settings"),
+            localModelInstalled: false);
+        useWindows.Show();
+        Assert.IsType<Button>(useWindows.FindName("SkipButton"))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(["WindowsFallback"], calls);
+        Assert.False(useWindows.IsVisible);
+
+        calls.Clear();
+        var rejected = CreateWindow(
+            choice => { calls.Add(choice.ToString()); return false; },
+            () => calls.Add("settings"));
+        rejected.Show();
+        Assert.IsType<Button>(rejected.FindName("SkipButton"))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(["DefaultLocal"], calls);
+        Assert.True(rejected.IsVisible);
+        rejected.Close();
     });
 
-    private static FirstRunWindow CreateWindow(Action complete, Action openSettings) => new(
+    private static FirstRunWindow CreateWindow(
+        Func<FirstRunCompletionChoice, bool>? complete = null,
+        Action? openSettings = null,
+        bool localModelInstalled = true,
+        Func<Action<FunAsrInstallProgress>, Task>? installLocalModel = null,
+        Func<bool>? confirmWindowsFallback = null,
+        Func<bool>? isPttGestureChorded = null,
+        PttMode pttMode = PttMode.Hold,
+        Action<PttMode>? setPttMode = null,
+        bool useConfiguredRecognition = false,
+        string recognitionSummary = "FunASR 本地 · SenseVoiceSmall") => new(
         "RightCtrl",
         "Right Ctrl",
-        "Windows 听写 · 简体中文 · Right Ctrl · 模型按需下载",
-        complete,
-        openSettings)
+        pttMode,
+        new FirstRunWindowActions(
+            localModelInstalled,
+            useConfiguredRecognition,
+            recognitionSummary,
+            installLocalModel ?? (_ => Task.CompletedTask),
+            () => { },
+            confirmWindowsFallback ?? (() => true),
+            isPttGestureChorded ?? (() => false),
+            setPttMode ?? (_ => { }),
+            complete ?? (_ => true),
+            openSettings ?? (() => { })))
     {
         WindowStartupLocation = WindowStartupLocation.Manual,
         Left = -10_000,
@@ -218,6 +575,29 @@ public sealed class FirstRunWindowLayoutTests
 
     private static void PumpDispatcher() =>
         Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.Render, new Action(() => { }));
+
+    private static void PumpDispatcherUntil(Func<bool> condition)
+    {
+        DateTime deadline = DateTime.UtcNow.AddSeconds(2);
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(10);
+            Dispatcher.CurrentDispatcher.Invoke(
+                DispatcherPriority.ApplicationIdle,
+                new Action(() => { }));
+        }
+    }
+
+    private static void RaiseKey(Window window, RoutedEvent routedEvent, Key key)
+    {
+        var source = PresentationSource.FromVisual(window)
+            ?? throw new InvalidOperationException("Window has no presentation source.");
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+        {
+            RoutedEvent = routedEvent,
+        };
+        window.RaiseEvent(args);
+    }
 
     private static void Capture(FrameworkElement content, string? directory, string fileName)
     {

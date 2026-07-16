@@ -186,6 +186,8 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <StackPanel>
@@ -201,7 +203,123 @@
                                TextWrapping="Wrap" />
                 </StackPanel>
 
-                <Grid Grid.Row="1" Margin="0,12,0,0">
+                <Border x:Name="LocalModelSetupPanel"
+                        Grid.Row="1"
+                        Margin="0,12,0,0"
+                        Padding="14,11"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="#ACCCC3"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        AutomationProperties.Name="FunASR 本地模型设置">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="38" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="32" Height="32" CornerRadius="6" Background="{StaticResource AccentBrush}">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="15"
+                                       Foreground="White"
+                                       Text="&#xE9D9;" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="10,0,18,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="LocalModelTitleText"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextBrush}"
+                                       Text="使用本地 FunASR（推荐）" />
+                            <TextBlock x:Name="LocalModelStatusText"
+                                       Margin="0,3,0,0"
+                                       FontSize="11"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <ProgressBar x:Name="LocalModelProgressBar"
+                                         Height="6"
+                                         Margin="0,8,0,0"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Visibility="Collapsed"
+                                         AutomationProperties.Name="本地模型安装进度" />
+                            <TextBlock x:Name="LocalModelProgressText"
+                                       Margin="0,4,0,0"
+                                       FontSize="10"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Visibility="Collapsed"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="CancelLocalModelInstallButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Content="取消"
+                                    Visibility="Collapsed"
+                                    Click="OnCancelLocalModelInstallClick" />
+                            <Button x:Name="InstallLocalModelButton"
+                                    MinWidth="116"
+                                    Margin="8,0,0,0"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Content="下载并使用"
+                                    AutomationProperties.Name="下载并使用 SenseVoiceSmall 本地模型"
+                                    Click="OnInstallLocalModelClick" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="ActivationModePanel"
+                        Grid.Row="2"
+                        Margin="0,10,0,0"
+                        Padding="13,10"
+                        Background="#F8FAFB"
+                        BorderBrush="{StaticResource LineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        AutomationProperties.Name="选择说话方式">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                       Text="选择说话方式" />
+                            <TextBlock x:Name="LocalModelInlineStatusText"
+                                       Margin="0,3,12,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                       Text="设置后立即在下方试用" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <RadioButton x:Name="HoldModeRadio"
+                                     Grid.Column="1"
+                                     GroupName="OnboardingPttMode"
+                                     Padding="6,2"
+                                     VerticalAlignment="Center"
+                                     Checked="OnPttModeChanged">
+                            <StackPanel Margin="5,0,10,0">
+                                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                           Text="按住说话" />
+                                <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                           Text="按住时聆听，松开后输入" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="ToggleModeRadio"
+                                     Grid.Column="2"
+                                     GroupName="OnboardingPttMode"
+                                     Padding="6,2"
+                                     VerticalAlignment="Center"
+                                     Checked="OnPttModeChanged">
+                            <StackPanel Margin="5,0,0,0">
+                                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                           Text="按一下开始 / 再按一下结束" TextWrapping="Wrap" />
+                                <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                           Text="无需一直按住按键" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="3" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="210" />
                         <ColumnDefinition Width="24" />
@@ -218,8 +336,9 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" Background="{StaticResource BlueBrush}">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="FocusStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        Background="{StaticResource BlueBrush}">
+                                    <TextBlock x:Name="FocusStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="White" Text="1" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
@@ -237,14 +356,16 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" BorderBrush="#AEBAC0" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="TalkStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        BorderBrush="#AEBAC0" BorderThickness="1">
+                                    <TextBlock x:Name="TalkStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="#65747C" Text="2" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
                                     <TextBlock x:Name="PracticePttStepText"
                                                FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap" />
-                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                    <TextBlock x:Name="PracticePttStepDetailText"
+                                               Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
                                                Text="按住时 VoiceInput 才会聆听" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
@@ -256,14 +377,17 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" BorderBrush="#AEBAC0" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="ReleaseStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        BorderBrush="#AEBAC0" BorderThickness="1">
+                                    <TextBlock x:Name="ReleaseStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="#65747C" Text="3" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
-                                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                    <TextBlock x:Name="PracticeReleaseStepText"
+                                               FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
                                                Text="松开即可输入" />
-                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                    <TextBlock x:Name="PracticeReleaseStepDetailText"
+                                               Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
                                                Text="文字会回到刚才的光标位置" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
@@ -401,7 +525,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Row="2"
+                <Border Grid.Row="4"
                         Margin="0,12,0,0"
                         Padding="0,11"
                         BorderBrush="{StaticResource LineBrush}"
@@ -419,7 +543,7 @@
                         </Border>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
-                                       Text="默认设置已就绪" />
+                                       Text="默认使用本地语音识别" />
                             <TextBlock x:Name="CurrentSummaryText" Margin="0,2,14,0" FontSize="11"
                                        Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
                         </StackPanel>
@@ -498,7 +622,8 @@
                                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10"
                                            FontWeight="Bold" Foreground="{StaticResource BlueBrush}" Text="2" />
                             </Border>
-                            <TextBlock Margin="7,0,0,0" VerticalAlignment="Center" FontSize="11" Text="按住说话" />
+                            <TextBlock x:Name="CompletionTalkStepText" Margin="7,0,0,0"
+                                       VerticalAlignment="Center" FontSize="11" Text="按住说话" />
                         </StackPanel>
                     </Border>
                     <TextBlock Grid.Column="3" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -509,7 +634,8 @@
                                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10"
                                            FontWeight="Bold" Foreground="{StaticResource BlueBrush}" Text="3" />
                             </Border>
-                            <TextBlock Margin="7,0,0,0" VerticalAlignment="Center" FontSize="11" Text="松开输入" />
+                            <TextBlock x:Name="CompletionSubmitStepText" Margin="7,0,0,0"
+                                       VerticalAlignment="Center" FontSize="11" Text="松开输入" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -581,7 +707,7 @@
                             <TextBlock FontFamily="Bahnschrift, Segoe UI" FontSize="15" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}" Text="可选的语音与输入设置" />
                             <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
-                                       Text="可在设置中按需下载 FunASR 模型，或配置 Azure Speech / GPT-4o，以及语言、热键和文字润色。"
+                                       Text="当前使用 SenseVoiceSmall 本地模型；也可在设置中切换其他 FunASR 模型、云端引擎、语言和热键。"
                                        TextWrapping="Wrap" />
                         </StackPanel>
                         <Button x:Name="CompletionOpenSettingsButton"

@@ -8,8 +8,8 @@ Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
 ## What makes it different
 
-VoiceInput works with Windows dictation by default. An optional **speech-aware LLM refinement
-layer** can be configured for:
+VoiceInput defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
+optional **speech-aware LLM refinement layer** can be configured for:
 
 - **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
   errors speech recognition actually makes — Chinese homophones / near-homophones, and tech terms
@@ -31,13 +31,14 @@ layer** can be configured for:
   such as Right-Ctrl+C still work; a watchdog recovers a missed key-up (UAC / lock screen).
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
-- **Guided first run.** A two-step setup window teaches the real focused-text-box workflow, then
-  shows where VoiceInput stays in the system tray and where optional engines and models are configured.
+- **Guided first run.** The setup window recommends and downloads SenseVoiceSmall with visible
+  package and byte progress, then teaches the real focused-text-box workflow. Users can explicitly
+  fall back to Windows dictation after an accuracy warning.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Four speech engines:** **Windows dictation** (may use Microsoft's online speech service),
-  **Azure Speech** (streaming), **gpt-4o-transcribe** via **Azure AI Foundry** (batch), and
-  **FunASR** with app-managed local GGUF models (batch). Azure Speech and gpt-4o-transcribe each
-  support **account-key** or **Microsoft Entra ID** auth.
+- **Four speech engines:** **FunASR** with app-managed local GGUF models (the new-user default,
+  batch), **Windows dictation** (lower accuracy; may use Microsoft's online speech service),
+  **Azure Speech** (streaming), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch). Azure
+  Speech and gpt-4o-transcribe each support **account-key** or **Microsoft Entra ID** auth.
 - **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
   minute between dictations, so back-to-back dictation is instant and the first words aren't lost to
   device cold-start. The mic is fully released when idle or paused.
@@ -74,6 +75,11 @@ Or just download `VoiceInput.exe` from the
 [Releases](https://github.com/fafa-npu/VoiceInput/releases) page and double-click it
 (it's self-contained — no .NET runtime needed).
 
+The installer installs the app only. On first launch, the guide offers to download the default
+SenseVoiceSmall model, CPU runtime, and VAD (about **260.8 MB** total). The download is resumable
+and requires an internet connection. Windows dictation remains available as a lower-accuracy
+fallback if the model download is skipped.
+
 Uninstall:
 
 ```powershell
@@ -85,8 +91,8 @@ This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correcti
 
 ## Local FunASR
 
-Open **Settings → FunASR** to download models on demand. **SenseVoiceSmall** is the default local
-model selection, but nothing is downloaded until you choose to install it.
+On first launch, the guide selects **SenseVoiceSmall** and offers to download it directly. After
+setup, open **Settings → FunASR** to install, switch, or remove local models on demand.
 
 | Model | Download | Languages | Intended use |
 | --- | ---: | --- | --- |
@@ -131,8 +137,9 @@ build time, atomically replaced, and rolled back if the new process does not sta
 
 ## Notes
 
-- **Windows on-device dictation** is web-service-backed: it may need _Online speech recognition_ on
-  and the zh-CN speech pack installed. For reliable zh-CN, use Azure Speech.
+- **Windows dictation** generally has lower recognition accuracy than FunASR, especially for
+  Chinese, accents, and technical vocabulary. It may also need _Online speech recognition_ and the
+  matching Windows speech pack. Prefer FunASR for local use or Azure Speech for streaming.
 - **gpt-4o-transcribe** is batch: it transcribes after you release (~0.5–2 s), so there are no live
   partials — but accuracy is highest (zh-CN homophones, tech terms). Needs an Azure AI Foundry
   resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).

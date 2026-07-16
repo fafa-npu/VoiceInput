@@ -50,6 +50,8 @@ public sealed class KeyboardHook : IDisposable
         _proc = HookCallback;
     }
 
+    internal bool IsPttGestureChorded => _pttDown && _chorded;
+
     public void SetPttKey(string pttKey) => _pttVk = ResolveVk(pttKey);
 
     public void Install()

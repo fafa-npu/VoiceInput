@@ -9,12 +9,15 @@ public sealed class SettingsStoreTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void FreshSettingsRequireOnboarding()
+    public void FreshSettingsRequireOnboardingAndDefaultToLocalFunAsr()
     {
         var store = new SettingsStore(Path.Combine(_directory, "settings.json"));
 
         Assert.False(store.Exists);
-        Assert.False(store.Load().OnboardingCompleted);
+        AppSettings settings = store.Load();
+        Assert.False(settings.OnboardingCompleted);
+        Assert.Equal(SpeechEngineKind.FunAsr, settings.Engine);
+        Assert.Equal(FunAsrModelCatalog.DefaultId, settings.FunAsrModelId);
     }
 
     [Fact]
@@ -81,6 +84,24 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(SpeechEngineKind.GptTranscribe, loaded.Engine);
         Assert.Equal(FunAsrModelCatalog.DefaultId, loaded.FunAsrModelId);
         Assert.Equal(PttMode.Hold, loaded.PttMode);
+        Assert.True(loaded.OnboardingCompleted);
+    }
+
+    [Fact]
+    public void LegacySettingsWithoutEngineKeepWindowsDefault()
+    {
+        string path = Path.Combine(_directory, "settings.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, """
+            {
+              "Language": "en-US"
+            }
+            """);
+        var store = new SettingsStore(path);
+
+        AppSettings loaded = store.Load();
+
+        Assert.Equal(SpeechEngineKind.Windows, loaded.Engine);
         Assert.True(loaded.OnboardingCompleted);
     }
 

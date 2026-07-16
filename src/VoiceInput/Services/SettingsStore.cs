@@ -45,7 +45,13 @@ public sealed class SettingsStore
         try
         {
             if (!File.Exists(_filePath))
-                return new AppSettings();
+            {
+                return new AppSettings
+                {
+                    Engine = SpeechEngineKind.FunAsr,
+                    FunAsrModelId = FunAsrModelCatalog.DefaultId,
+                };
+            }
 
             var dto = JsonSerializer.Deserialize<PersistedSettings>(File.ReadAllText(_filePath), JsonOptions);
             if (dto is null)

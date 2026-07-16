@@ -106,6 +106,24 @@ public sealed class AppController : IDisposable
         };
     }
 
+    internal static PttMode ResolvePttModeAfterSettingsSave(
+        PttMode current,
+        PttMode settingsOpenedWith,
+        PttMode submitted) =>
+        submitted == settingsOpenedWith ? current : submitted;
+
+    internal static (SpeechEngineKind Engine, string ModelId) ResolveOnboardingRecognition(
+        FirstRunCompletionChoice choice,
+        SpeechEngineKind currentEngine,
+        string currentModelId) => choice switch
+        {
+            FirstRunCompletionChoice.DefaultLocal =>
+                (SpeechEngineKind.FunAsr, FunAsrModelCatalog.DefaultId),
+            FirstRunCompletionChoice.WindowsFallback =>
+                (SpeechEngineKind.Windows, currentModelId),
+            _ => (currentEngine, currentModelId),
+        };
+
     private void HandlePttGesture(PttGesture gesture)
     {
         switch (ResolvePttGesture(_settings.PttMode, gesture, _dictating, _session.State))
@@ -642,16 +660,14 @@ public sealed class AppController : IDisposable
         _ => key,
     };
 
-    private static string EngineDisplay(SpeechEngineKind engine) => engine switch
-    {
-        SpeechEngineKind.Azure => "Azure Speech",
-        SpeechEngineKind.GptTranscribe => "GPT-4o Transcribe",
-        SpeechEngineKind.FunAsr => "FunASR 本地",
-        _ => "Windows 听写",
-    };
-
-    private static string LanguageDisplay(string language) =>
-        AppSettings.SupportedLanguages.FirstOrDefault(item => item.Code == language).Display ?? language;
+    private static string FirstRunRecognitionSummary(AppSettings settings, string modelId) =>
+        settings.Engine switch
+        {
+            SpeechEngineKind.FunAsr => $"FunASR 本地 · {FunAsrModelCatalog.Get(modelId).DisplayName}",
+            SpeechEngineKind.Azure => "Azure Speech 已配置",
+            SpeechEngineKind.GptTranscribe => $"GPT-4o Transcribe · {settings.TranscribeModel}",
+            _ => "Windows 听写 · 准确率较低",
+        };
 
     private void RebuildMenu()
     {
@@ -713,13 +729,26 @@ public sealed class AppController : IDisposable
             return;
         }
 
+        string selectedModelId = FunAsrModelCatalog.NormalizeId(_settings.FunAsrModelId);
+        bool useConfiguredRecognition = _settings.Engine != SpeechEngineKind.FunAsr
+            || selectedModelId != FunAsrModelCatalog.DefaultId;
+        bool recognitionReady = _settings.Engine != SpeechEngineKind.FunAsr
+            || _funAsr.IsInstalled(selectedModelId);
         var window = new FirstRunWindow(
             _settings.PttKey,
             PttDisplay(_settings.PttKey),
-            $"{EngineDisplay(_settings.Engine)} · {LanguageDisplay(_settings.Language)} · " +
-            $"{PttDisplay(_settings.PttKey)} · 模型按需下载",
-            CompleteOnboarding,
-            OpenSettings);
+            _settings.PttMode,
+            new FirstRunWindowActions(
+                recognitionReady,
+                useConfiguredRecognition,
+                FirstRunRecognitionSummary(_settings, selectedModelId),
+                InstallDefaultFunAsrForOnboardingAsync,
+                () => CancelFunAsrInstall(FunAsrModelCatalog.DefaultId),
+                ConfirmWindowsFallback,
+                () => _hook.IsPttGestureChorded,
+                SetOnboardingPttMode,
+                CompleteOnboarding,
+                OpenSettings));
         _firstRunWindow = window;
         window.Closed += (_, _) =>
         {
@@ -730,19 +759,69 @@ public sealed class AppController : IDisposable
         window.Activate();
     }
 
-    private void CompleteOnboarding()
+    private static bool ConfirmWindowsFallback() => MessageBox.Show(
+        "Windows 听写的识别准确率较低，尤其是中文、口音和专业词汇。\n\n" +
+        "建议下载并使用 FunASR 本地模型。仍要改用 Windows 听写吗？",
+        "改用 Windows 听写？",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning) == MessageBoxResult.Yes;
+
+    private void SetOnboardingPttMode(PttMode mode)
     {
-        if (_settings.OnboardingCompleted) return;
+        if (_settings.PttMode == mode)
+            return;
+        _settings.PttMode = mode;
+        Persist();
+        if (_tray is not null)
+            _tray.Text = TrayTooltip();
+        Log.Write($"First-run activation mode changed to {mode}.");
+    }
+
+    private bool CompleteOnboarding(FirstRunCompletionChoice choice)
+    {
+        if (_settings.OnboardingCompleted) return true;
+        (SpeechEngineKind engine, string modelId) = ResolveOnboardingRecognition(
+            choice,
+            _settings.Engine,
+            FunAsrModelCatalog.NormalizeId(_settings.FunAsrModelId));
+        if (engine == SpeechEngineKind.FunAsr && !_funAsr.IsInstalled(modelId))
+            return false;
+
+        _settings.Engine = engine;
+        _settings.FunAsrModelId = modelId;
         _settings.OnboardingCompleted = true;
         Persist();
         RebuildMenu();
-        Log.Write("First-run onboarding completed.");
+        Log.Write($"First-run onboarding completed with engine={_settings.Engine}.");
+        return true;
+    }
+
+    private async Task InstallDefaultFunAsrForOnboardingAsync(
+        Action<FunAsrInstallProgress> reportProgress)
+    {
+        _funAsr.ProgressChanged += reportProgress;
+        try
+        {
+            await InstallFunAsrAsync(FunAsrModelCatalog.DefaultId);
+        }
+        finally
+        {
+            _funAsr.ProgressChanged -= reportProgress;
+        }
     }
 
     private void OpenSettings()
     {
+        FirstRunWindow? firstRun = _firstRunWindow;
+        if (firstRun is { IsVisible: true })
+            firstRun.IsEnabled = false;
+        PttMode settingsOpenedWith = _settings.PttMode;
         var win = new SettingsWindow(_settings, updated =>
         {
+            updated.PttMode = ResolvePttModeAfterSettingsSave(
+                _settings.PttMode,
+                settingsOpenedWith,
+                updated.PttMode);
             _settings = updated;
             _store.Save(_settings);
             _hook.SetPttKey(_settings.PttKey);
@@ -757,6 +836,18 @@ public sealed class AppController : IDisposable
             InstallFunAsrAsync,
             CancelFunAsrInstall,
             ActiveFunAsrModelId));
+        if (firstRun is not null)
+        {
+            win.Owner = firstRun;
+            win.Closed += (_, _) =>
+            {
+                if (!ReferenceEquals(_firstRunWindow, firstRun))
+                    return;
+                firstRun.Close();
+                if (!_settings.OnboardingCompleted)
+                    OpenFirstRun();
+            };
+        }
         win.Show();
         win.Activate();
     }

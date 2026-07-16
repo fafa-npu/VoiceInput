@@ -13,10 +13,12 @@ public sealed class KeyboardHookTests
         var events = CaptureEvents(hook);
 
         hook.ProcessKeyEvent(VK_RCONTROL, isDown: true, isUp: false);
+        Assert.True(hook.IsPttGestureChorded);
         heldKeys.Remove(VK_V);
         hook.ProcessKeyEvent(VK_RCONTROL, isDown: false, isUp: true);
 
         Assert.Empty(events);
+        Assert.False(hook.IsPttGestureChorded);
     }
 
     [Fact]
