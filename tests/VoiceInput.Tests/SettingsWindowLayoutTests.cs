@@ -110,7 +110,7 @@ public sealed class SettingsWindowLayoutTests
                         $"Vocabulary count is outside the minimum viewport: {countBounds}, "
                         + $"viewport height {page.ViewportHeight:F1}px.");
                     Capture(
-                        window,
+                        content,
                         Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR"),
                         "vocabulary-populated-720x520.png");
                 }
@@ -169,7 +169,7 @@ public sealed class SettingsWindowLayoutTests
         try
         {
             window.Show();
-            var engine = Assert.IsType<ComboBox>(window.FindName("EngineCombo"));
+            var engine = Assert.IsType<ListBox>(window.FindName("EngineList"));
             var modelKind = Assert.IsType<ComboBox>(window.FindName("TranscribeModelKindCombo"));
             var deployment = Assert.IsType<TextBox>(window.FindName("TranscribeModelBox"));
             var vocabularyNav = Assert.IsType<RadioButton>(window.FindName("VocabularyNav"));
@@ -306,11 +306,13 @@ public sealed class SettingsWindowLayoutTests
         try
         {
             window.Show();
-            Assert.IsType<RadioButton>(window.FindName("FunAsrNav")).IsChecked = true;
+            Assert.IsType<RadioButton>(window.FindName("ModelSelectionNav")).IsChecked = true;
+            Assert.IsType<ListBox>(window.FindName("EngineList")).SelectedIndex = 3;
             var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
-            Layout(window, content, 900, 650);
+            Layout(window, content, 720, 520);
             Button download = Descendants<Button>(window)
-                .First(button => Equals(button.Content, "Download"));
+                .First(button => button.Content is string label
+                    && label.StartsWith("Download", StringComparison.Ordinal));
 
             var stopwatch = Stopwatch.StartNew();
             download.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -318,14 +320,36 @@ public sealed class SettingsWindowLayoutTests
             Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
 
             Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(250));
-            Assert.Contains(Descendants<ProgressBar>(window), progress => progress.Visibility == Visibility.Visible);
+            Assert.False(Assert.IsType<Button>(window.FindName("SaveButton")).IsEnabled);
+            Assert.False(Assert.IsType<Button>(window.FindName("CancelButton")).IsEnabled);
+            Assert.Contains(
+                "download",
+                Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(
+                Descendants<Button>(window),
+                button => Equals(button.Content, "Cancel download"));
+            ProgressBar visibleProgress = Descendants<ProgressBar>(window)
+                .First(progress => progress.Visibility == Visibility.Visible);
             Assert.Contains(Descendants<TextBlock>(window), text =>
                 text.Visibility == Visibility.Visible
                 && text.Text.Contains(Path.GetFileName(FunAsrModelCatalog.Runtime.RelativePath))
                 && text.Text.Contains("MB"));
             Layout(window, content, 720, 520);
-            Capture(window, Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR"),
-                "funasr-download-progress-720x520.png");
+            Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+            var modelSelectionPage = Assert.IsType<ScrollViewer>(window.FindName("ModelSelectionPage"));
+            Rect progressBounds = visibleProgress.TransformToAncestor(modelSelectionPage)
+                .TransformBounds(new Rect(visibleProgress.RenderSize));
+            Assert.True(
+                progressBounds.Top >= 0 && progressBounds.Bottom <= modelSelectionPage.ViewportHeight,
+                $"Download progress is outside the minimum viewport: {progressBounds}, "
+                + $"viewport height {modelSelectionPage.ViewportHeight:F1}px.");
+            Assert.All(
+                Descendants<Button>(Assert.IsType<StackPanel>(window.FindName("LocalModelsPanel")))
+                    .Where(button => button.Visibility == Visibility.Visible),
+                button => Assert.InRange(button.ActualHeight, 32, 44));
+            Capture(content, Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR"),
+                "model-selection-download-progress-720x520.png");
             Assert.IsType<RadioButton>(window.FindName("AppNav")).IsChecked = true;
             Assert.Equal(Visibility.Visible, Assert.IsType<ScrollViewer>(window.FindName("AppPage")).Visibility);
         }
@@ -436,6 +460,7 @@ public sealed class SettingsWindowLayoutTests
             new HttpClient(new OfflineHandler()),
             () => long.MaxValue,
             (_, _) => Task.CompletedTask);
+        int installCalls = 0;
         var actions = new SettingsWindowActions(
             () => false,
             _ => { },
@@ -446,7 +471,11 @@ public sealed class SettingsWindowLayoutTests
                 null)),
             _ => { },
             () => { },
-            _ => Task.CompletedTask,
+            _ =>
+            {
+                installCalls++;
+                return Task.CompletedTask;
+            },
             _ => { },
             () => null);
         AppSettings? savedSettings = null;
@@ -461,25 +490,93 @@ public sealed class SettingsWindowLayoutTests
         var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
         string? captureDirectory = Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR");
 
-        foreach (string page in new[] { "Overview", "Speech", "Vocabulary", "FunAsr", "Refinement", "App" })
+        foreach (string page in new[] { "Overview", "ModelSelection", "Vocabulary", "Refinement", "App" })
         {
             var navigation = Assert.IsType<RadioButton>(window.FindName(page + "Nav"));
             navigation.IsChecked = true;
             Layout(window, content, 900, 650);
             Assert.True(content.ActualWidth >= Math.Min(900, window.ActualWidth) - 40);
             Assert.True(content.ActualHeight >= 580);
-            Capture(window, captureDirectory, page.ToLowerInvariant() + "-900x650.png");
+            Capture(content, captureDirectory, page.ToLowerInvariant() + "-900x650.png");
         }
 
-        Assert.IsType<RadioButton>(window.FindName("FunAsrNav")).IsChecked = true;
+        Assert.Null(window.FindName("SpeechNav"));
+        Assert.Null(window.FindName("FunAsrNav"));
+        Assert.Null(window.FindName("SpeechPage"));
+        Assert.Null(window.FindName("FunAsrPage"));
+
+        var modelSelectionNav = Assert.IsType<RadioButton>(window.FindName("ModelSelectionNav"));
+        Assert.Equal("Model Selection", modelSelectionNav.Content);
+        var engineList = Assert.IsType<ListBox>(window.FindName("EngineList"));
+        Assert.Equal(
+            ["Windows", "Azure", "GptTranscribe", "FunAsr"],
+            engineList.Items.Cast<ListBoxItem>()
+                .Select(item => Assert.IsType<string>(item.Tag))
+                .ToArray());
+        var localModels = Assert.IsType<StackPanel>(window.FindName("LocalModelsPanel"));
+        var modelSelectionPage = Assert.IsType<ScrollViewer>(window.FindName("ModelSelectionPage"));
+        var azureFields = Assert.IsType<StackPanel>(window.FindName("AzureFieldsPanel"));
+        var transcribeFields = Assert.IsType<StackPanel>(window.FindName("TranscribeFieldsPanel"));
+        var selectionStatus = Assert.IsType<TextBlock>(window.FindName("ModelSelectionStatusText"));
+        var selectionStatusBorder = Assert.IsType<Border>(window.FindName("ModelSelectionStatusBorder"));
+
+        modelSelectionNav.IsChecked = true;
+        Assert.Contains("Windows dictation is active", selectionStatus.Text, StringComparison.Ordinal);
+        Assert.Equal(
+            Color.FromRgb(244, 248, 245),
+            Assert.IsType<SolidColorBrush>(selectionStatusBorder.Background).Color);
+        Assert.Equal(Visibility.Collapsed, localModels.Visibility);
+        engineList.SelectedIndex = 1;
+        Assert.Equal(Visibility.Visible, azureFields.Visibility);
+        Assert.Equal(Visibility.Collapsed, transcribeFields.Visibility);
+        Assert.Contains("Configure Azure Speech", selectionStatus.Text, StringComparison.Ordinal);
+        engineList.SelectedIndex = 2;
+        Assert.Equal(Visibility.Collapsed, azureFields.Visibility);
+        Assert.Equal(Visibility.Visible, transcribeFields.Visibility);
+        Assert.Contains("Configure GPT-4o Transcribe", selectionStatus.Text, StringComparison.Ordinal);
+        engineList.SelectedIndex = 3;
+        Assert.Equal(Visibility.Visible, localModels.Visibility);
+        Assert.Contains("Download SenseVoiceSmall", selectionStatus.Text, StringComparison.Ordinal);
+        Assert.Contains(
+            "Download SenseVoiceSmall to continue",
+            Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,
+            StringComparison.Ordinal);
+        Assert.False(Assert.IsType<Button>(window.FindName("SaveButton")).IsEnabled);
+        Assert.Equal(
+            Color.FromRgb(255, 250, 240),
+            Assert.IsType<SolidColorBrush>(selectionStatusBorder.Background).Color);
+        Assert.Equal(3, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
+        Assert.DoesNotContain(
+            Descendants<TextBlock>(localModels).Where(text => text.Visibility == Visibility.Visible),
+            text => text.Text == "Selected");
+
         Layout(window, content, 720, 520);
+        Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+        Rect localModelsBounds = localModels.TransformToAncestor(modelSelectionPage)
+            .TransformBounds(new Rect(localModels.RenderSize));
+        Assert.True(
+            localModelsBounds.Top >= 0 && localModelsBounds.Top < modelSelectionPage.ViewportHeight,
+            $"Local model details were not brought into view: {localModelsBounds}, "
+            + $"viewport height {modelSelectionPage.ViewportHeight:F1}px.");
+        Assert.All(
+            Descendants<Button>(localModels).Where(button => button.Visibility == Visibility.Visible),
+            button => Assert.InRange(button.ActualHeight, 32, 44));
         Assert.True(content.ActualWidth >= Math.Min(720, window.ActualWidth) - 40);
         Assert.True(content.ActualHeight >= 450);
-        Capture(window, captureDirectory, "funasr-720x520.png");
+        Capture(content, captureDirectory, "model-selection-720x520.png");
+
+        engineList.SelectedIndex = 0;
+        Assert.IsType<RadioButton>(window.FindName("OverviewNav")).IsChecked = true;
+        var chooseModel = Assert.IsType<Button>(window.FindName("ChooseModelButton"));
+        Assert.Equal("Choose a model", chooseModel.Content);
+        chooseModel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(modelSelectionNav.IsChecked);
+        Assert.Equal(0, engineList.SelectedIndex);
+        Assert.Equal(0, installCalls);
 
         Assert.IsType<RadioButton>(window.FindName("VocabularyNav")).IsChecked = true;
         Layout(window, content, 720, 520);
-        Capture(window, captureDirectory, "vocabulary-720x520.png");
+        Capture(content, captureDirectory, "vocabulary-720x520.png");
 
         Assert.IsType<RadioButton>(window.FindName("AppNav")).IsChecked = true;
         Layout(window, content, 720, 520);
@@ -489,7 +586,7 @@ public sealed class SettingsWindowLayoutTests
         Assert.True(
             pttModeBounds.Top >= 0 && pttModeBounds.Bottom <= appPage.ViewportHeight,
             $"Activation mode selector is outside the App viewport: {pttModeBounds}, viewport height {appPage.ViewportHeight}.");
-        Capture(window, captureDirectory, "app-720x520.png");
+        Capture(content, captureDirectory, "app-720x520.png");
 
         Assert.Equal(0, pttMode.SelectedIndex);
         pttMode.SelectedIndex = 1;
@@ -526,15 +623,29 @@ public sealed class SettingsWindowLayoutTests
         if (string.IsNullOrWhiteSpace(directory))
             return;
         Directory.CreateDirectory(directory);
-        int width = Math.Max(1, checked((int)Math.Ceiling(content.ActualWidth)));
-        int height = Math.Max(1, checked((int)Math.Ceiling(content.ActualHeight)));
-        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        DpiScale dpi = VisualTreeHelper.GetDpi(content);
+        int width = Math.Max(1, checked((int)Math.Ceiling(content.ActualWidth * dpi.DpiScaleX)));
+        int height = Math.Max(1, checked((int)Math.Ceiling(content.ActualHeight * dpi.DpiScaleY)));
+        var rendered = new RenderTargetBitmap(
+            width,
+            height,
+            dpi.PixelsPerInchX,
+            dpi.PixelsPerInchY,
+            PixelFormats.Pbgra32);
+        rendered.Render(content);
+
+        var bitmap = new RenderTargetBitmap(
+            width,
+            height,
+            dpi.PixelsPerInchX,
+            dpi.PixelsPerInchY,
+            PixelFormats.Pbgra32);
         var visual = new DrawingVisual();
         using (DrawingContext drawing = visual.RenderOpen())
         {
-            var bounds = new Rect(0, 0, width, height);
+            var bounds = new Rect(0, 0, content.ActualWidth, content.ActualHeight);
             drawing.DrawRectangle(Brushes.White, null, bounds);
-            drawing.DrawRectangle(new VisualBrush(content), null, bounds);
+            drawing.DrawImage(rendered, bounds);
         }
         bitmap.Render(visual);
         var encoder = new PngBitmapEncoder();

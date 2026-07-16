@@ -57,7 +57,7 @@ public partial class SettingsWindow : Window
         _selectedFunAsrModelId = FunAsrModelCatalog.NormalizeId(_draft.FunAsrModelId);
 
         VersionText.Text = $"Version {UpdateService.CurrentVersion}";
-        EngineCombo.SelectedIndex = EngineIndex(_draft.Engine);
+        EngineList.SelectedIndex = EngineIndex(_draft.Engine);
         AzureAuthCombo.SelectedIndex = _draft.AzureAuthMode == AzureAuthMode.EntraId ? 1 : 0;
         TranscribeAuthCombo.SelectedIndex = _draft.TranscribeAuthMode == AzureAuthMode.EntraId ? 1 : 0;
         AzureKeyBox.Password = _draft.AzureKey;
@@ -127,16 +127,15 @@ public partial class SettingsWindow : Window
 
     private void OnNavigationChanged(object sender, RoutedEventArgs e)
     {
-        if (OverviewPage is null || SpeechPage is null || VocabularyPage is null || FunAsrPage is null
+        if (OverviewPage is null || ModelSelectionPage is null || VocabularyPage is null
             || RefinementPage is null || AppPage is null)
         {
             return;
         }
 
         OverviewPage.Visibility = sender == OverviewNav ? Visibility.Visible : Visibility.Collapsed;
-        SpeechPage.Visibility = sender == SpeechNav ? Visibility.Visible : Visibility.Collapsed;
+        ModelSelectionPage.Visibility = sender == ModelSelectionNav ? Visibility.Visible : Visibility.Collapsed;
         VocabularyPage.Visibility = sender == VocabularyNav ? Visibility.Visible : Visibility.Collapsed;
-        FunAsrPage.Visibility = sender == FunAsrNav ? Visibility.Visible : Visibility.Collapsed;
         RefinementPage.Visibility = sender == RefinementNav ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = sender == AppNav ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -147,6 +146,17 @@ public partial class SettingsWindow : Window
             return;
         UpdateFieldVisibility();
         OnDraftValueChanged(sender, e);
+        if (_loading)
+            return;
+
+        FrameworkElement details = EngineList.SelectedIndex switch
+        {
+            1 => AzureFieldsPanel,
+            2 => TranscribeFieldsPanel,
+            3 => LocalModelsPanel,
+            _ => WindowsFieldsPanel,
+        };
+        _ = Dispatcher.BeginInvoke(new Action(details.BringIntoView));
     }
 
     private void OnAzureAuthChanged(object sender, SelectionChangedEventArgs e)
@@ -202,12 +212,14 @@ public partial class SettingsWindow : Window
 
     private void UpdateFieldVisibility()
     {
-        bool azure = EngineCombo.SelectedIndex == 1;
-        bool transcribe = EngineCombo.SelectedIndex == 2;
-        bool funAsr = EngineCombo.SelectedIndex == 3;
+        bool windows = EngineList.SelectedIndex == 0;
+        bool azure = EngineList.SelectedIndex == 1;
+        bool transcribe = EngineList.SelectedIndex == 2;
+        bool funAsr = EngineList.SelectedIndex == 3;
         bool azureEntra = AzureAuthCombo.SelectedIndex == 1;
         bool transcribeEntra = TranscribeAuthCombo.SelectedIndex == 1;
 
+        WindowsFieldsPanel.Visibility = windows ? Visibility.Visible : Visibility.Collapsed;
         AzureFieldsPanel.Visibility = azure ? Visibility.Visible : Visibility.Collapsed;
         AzureKeyPanel.Visibility = azure && !azureEntra ? Visibility.Visible : Visibility.Collapsed;
         AzureEntraPanel.Visibility = azure && azureEntra ? Visibility.Visible : Visibility.Collapsed;
@@ -220,12 +232,12 @@ public partial class SettingsWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         TranscribeTenantLabel.Visibility = TranscribeTenantIdBox.Visibility;
-        FunAsrSpeechPanel.Visibility = funAsr ? Visibility.Visible : Visibility.Collapsed;
+        LocalModelsPanel.Visibility = funAsr ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void Collect()
     {
-        _draft.Engine = EngineCombo.SelectedIndex switch
+        _draft.Engine = EngineList.SelectedIndex switch
         {
             1 => SpeechEngineKind.Azure,
             2 => SpeechEngineKind.GptTranscribe,
@@ -269,7 +281,7 @@ public partial class SettingsWindow : Window
     private void RefreshAll()
     {
         RefreshOverview();
-        RefreshSpeechSummary();
+        RefreshModelSelectionSummary();
         RefreshVocabulary();
         RefreshModelRows();
         RefreshDirtyState();
@@ -343,33 +355,130 @@ public partial class SettingsWindow : Window
             OverviewBanner.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 210, 199));
         }
 
-        bool defaultInstalled = _funAsr.IsInstalled(FunAsrModelCatalog.DefaultId);
-        SetUpFunAsrButton.Content = defaultInstalled ? "Manage FunASR" : "Set up FunASR";
         FunAsrSummaryText.Text =
             $"Runtime {FunAsrModelCatalog.RuntimeVersion} · {RuntimeBuild} · "
             + $"{installedCount} of {FunAsrModelCatalog.Models.Count} models installed";
     }
 
-    private void RefreshSpeechSummary()
+    private void RefreshModelSelectionSummary()
     {
-        FunAsrModelDefinition model = FunAsrModelCatalog.Get(_selectedFunAsrModelId);
-        bool installed = _funAsr.IsInstalled(model.Id);
-        bool compatible = model.Supports(_draft.Language);
-        SpeechFunAsrModelText.Text = model.DisplayName;
-        SpeechFunAsrStatusText.Text = !compatible
-            ? $"Not compatible with {_draft.Language}. Choose another model or language."
-            : installed
-                ? "Installed and ready on this device."
-                : "Not installed. Download it from the FunASR page before saving.";
-        SpeechFunAsrStatusText.Foreground = installed && compatible ? SuccessBrush : AttentionBrush;
+        string active = SelectionDisplay(_original, _original.FunAsrModelId);
+        string selected = SelectionDisplay(_draft, _selectedFunAsrModelId);
+        bool sameSelection = !HasModelSelectionChanged();
+
+        if (_draft.Engine == SpeechEngineKind.Azure)
+        {
+            bool configured = _draft.AzureAuthMode == AzureAuthMode.Key
+                ? !string.IsNullOrWhiteSpace(_draft.AzureKey) && !string.IsNullOrWhiteSpace(_draft.AzureRegion)
+                : ValidEndpoint(_draft.AzureEndpoint);
+            if (!configured)
+            {
+                SetModelSelectionStatus(
+                    $"{active} is active. Configure Azure Speech to finish this selection.",
+                    attention: true);
+                return;
+            }
+        }
+        else if (_draft.Engine == SpeechEngineKind.GptTranscribe)
+        {
+            bool configured = ValidEndpoint(_draft.TranscribeEndpoint)
+                && !string.IsNullOrWhiteSpace(_draft.TranscribeModel)
+                && (_draft.TranscribeAuthMode != AzureAuthMode.Key
+                    || !string.IsNullOrWhiteSpace(_draft.TranscribeApiKey));
+            if (!configured)
+            {
+                SetModelSelectionStatus(
+                    $"{active} is active. Configure GPT-4o Transcribe to finish this selection.",
+                    attention: true);
+                return;
+            }
+        }
+        else if (_draft.Engine == SpeechEngineKind.FunAsr)
+        {
+            FunAsrModelDefinition model = FunAsrModelCatalog.Get(_selectedFunAsrModelId);
+            if (!model.Supports(_draft.Language))
+            {
+                SetModelSelectionStatus(
+                    $"{active} is active. {model.DisplayName} is not available for {_draft.Language}.",
+                    attention: true);
+                return;
+            }
+            if (!_funAsr.IsInstalled(model.Id))
+            {
+                SetModelSelectionStatus(
+                    $"{active} is active. Download {model.DisplayName} to finish this local selection.",
+                    attention: true);
+                return;
+            }
+        }
+
+        SetModelSelectionStatus(
+            sameSelection
+                ? $"{active} is active for new dictation sessions."
+                : $"{active} is active. {selected} will be used after you save changes.",
+            attention: !sameSelection);
+    }
+
+    private void SetModelSelectionStatus(string text, bool attention)
+    {
+        ModelSelectionStatusText.Text = text;
+        ModelSelectionStatusText.Foreground = attention ? AttentionBrush : SuccessBrush;
+        ModelSelectionStatusBorder.Background = attention
+            ? new SolidColorBrush(Color.FromRgb(255, 250, 240))
+            : new SolidColorBrush(Color.FromRgb(244, 248, 245));
+        ModelSelectionStatusBorder.BorderBrush = attention
+            ? new SolidColorBrush(Color.FromRgb(228, 212, 183))
+            : new SolidColorBrush(Color.FromRgb(191, 210, 199));
     }
 
     private void RefreshDirtyState()
     {
         bool dirty = !SettingsEqual(_draft, _original);
-        SaveButton.IsEnabled = dirty;
-        SetStatus(dirty ? "Unsaved changes" : "Settings saved", MutedBrush);
+        string? installingModelId = _modelProgress
+            .Where(item => item.Value.Stage is not (
+                FunAsrInstallStage.Installed or FunAsrInstallStage.Failed or FunAsrInstallStage.NotInstalled))
+            .Select(item => item.Key)
+            .FirstOrDefault();
+        bool installing = installingModelId is not null;
+        bool selectionChanged = HasModelSelectionChanged();
+        FunAsrModelDefinition localModel = FunAsrModelCatalog.Get(_selectedFunAsrModelId);
+        string? localSelectionBlocker = _draft.Engine != SpeechEngineKind.FunAsr
+            ? null
+            : !localModel.Supports(_draft.Language)
+                ? $"Choose a local model that supports {_draft.Language}"
+                : !_funAsr.IsInstalled(localModel.Id)
+                    ? $"Download {localModel.DisplayName} to continue"
+                    : null;
+
+        SaveButton.IsEnabled = dirty && !installing && localSelectionBlocker is null;
+        SaveButton.Content = dirty
+            && _draft.Engine == SpeechEngineKind.FunAsr
+            && localSelectionBlocker is null
+                ? $"Save and use {localModel.DisplayName}"
+                : "Save changes";
+        CancelButton.IsEnabled = !installing;
+        CancelButton.Content = dirty ? "Discard changes" : "Close";
+
+        string active = SelectionDisplay(_original, _original.FunAsrModelId);
+        string selected = SelectionDisplay(_draft, _selectedFunAsrModelId);
+        string status = installing
+            ? $"Current: {active} · Downloading {FunAsrModelCatalog.Get(installingModelId!).DisplayName}"
+            : localSelectionBlocker is not null
+                ? $"Current: {active} · {localSelectionBlocker}"
+                : selectionChanged
+                    ? $"Current: {active} · Pending: {selected}"
+                    : dirty ? "Unsaved changes" : "Settings saved";
+        SetStatus(
+            status,
+            installing || selectionChanged || localSelectionBlocker is not null ? AttentionBrush : MutedBrush);
     }
+
+    private bool HasModelSelectionChanged() =>
+        _original.Engine != _draft.Engine
+        || (_draft.Engine == SpeechEngineKind.GptTranscribe
+            && _original.TranscribeModelKind != _draft.TranscribeModelKind)
+        || (_draft.Engine == SpeechEngineKind.FunAsr
+            && FunAsrModelCatalog.NormalizeId(_original.FunAsrModelId) != _selectedFunAsrModelId);
 
     private void BuildModelRows()
     {
@@ -379,10 +488,11 @@ public partial class SettingsWindow : Window
         {
             var selectedText = new TextBlock
             {
-                Text = "Selected",
+                Text = string.Empty,
                 FontSize = 11,
                 Foreground = SuccessBrush,
                 Margin = new Thickness(9, 2, 0, 0),
+                Visibility = Visibility.Collapsed,
             };
             var titlePanel = new StackPanel { Orientation = Orientation.Horizontal };
             titlePanel.Children.Add(new TextBlock
@@ -408,7 +518,8 @@ public partial class SettingsWindow : Window
                 Margin = new Thickness(0, 8, 18, 0),
                 TextWrapping = TextWrapping.Wrap,
             };
-            meta.Inlines.Add(new Run($"{FormatSize(model.DownloadSize)}  |  {LanguageList(model)}  |  "));
+            meta.Inlines.Add(new Run(
+                $"Up to {FormatSize(LocalPackageSize(model))}  |  {LanguageList(model)}  |  "));
             AddLink(meta, "Source", model.Source);
             meta.Inlines.Add(new Run("  "));
             AddLink(meta, "License", model.License);
@@ -418,15 +529,14 @@ public partial class SettingsWindow : Window
                 Foreground = MutedBrush,
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment = TextAlignment.Right,
+                Margin = new Thickness(0, 4, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 220,
             };
             var buttons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(16, 8, 0, 0),
             };
             var progressDetail = new TextBlock
@@ -455,20 +565,21 @@ public partial class SettingsWindow : Window
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(titlePanel, 0);
-            Grid.SetColumn(titlePanel, 0);
-            Grid.SetRow(status, 0);
-            Grid.SetColumn(status, 1);
-            Grid.SetRow(description, 1);
+            Grid.SetColumnSpan(titlePanel, 2);
+            Grid.SetRow(status, 1);
+            Grid.SetColumnSpan(status, 2);
+            Grid.SetRow(description, 2);
             Grid.SetColumn(description, 0);
-            Grid.SetRow(meta, 2);
+            Grid.SetRow(meta, 3);
             Grid.SetColumn(meta, 0);
-            Grid.SetRow(buttons, 1);
+            Grid.SetRow(buttons, 2);
             Grid.SetRowSpan(buttons, 2);
             Grid.SetColumn(buttons, 1);
-            Grid.SetRow(progressDetail, 3);
+            Grid.SetRow(progressDetail, 4);
             Grid.SetColumnSpan(progressDetail, 2);
-            Grid.SetRow(progress, 4);
+            Grid.SetRow(progress, 5);
             Grid.SetColumnSpan(progress, 2);
             content.Children.Add(titlePanel);
             content.Children.Add(status);
@@ -501,13 +612,24 @@ public partial class SettingsWindow : Window
             ModelRow row = _modelRows[model.Id];
             bool selected = model.Id == _selectedFunAsrModelId;
             bool compatible = model.Supports(_draft.Language);
+            bool installed = _funAsr.IsInstalled(model.Id);
+            bool active = _original.Engine == SpeechEngineKind.FunAsr
+                && FunAsrModelCatalog.NormalizeId(_original.FunAsrModelId) == model.Id;
+            bool willUse = installed && selected && _draft.Engine == SpeechEngineKind.FunAsr;
             _modelProgress.TryGetValue(model.Id, out FunAsrInstallProgress? progress);
             bool terminal = progress?.Stage is FunAsrInstallStage.Installed
                 or FunAsrInstallStage.Failed
                 or FunAsrInstallStage.NotInstalled;
             bool installing = !terminal && (model.Id == activeModelId || progress is not null);
 
-            row.Selected.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
+            row.Selected.Text = willUse
+                ? active ? "Active" : "Will use after Save"
+                : active
+                    ? "Active now"
+                    : model.Id == FunAsrModelCatalog.DefaultId ? "Recommended" : string.Empty;
+            row.Selected.Visibility = string.IsNullOrEmpty(row.Selected.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             row.Actions.Children.Clear();
             row.ProgressDetail.Visibility = Visibility.Collapsed;
             row.ProgressDetail.Text = string.Empty;
@@ -531,25 +653,27 @@ public partial class SettingsWindow : Window
                 {
                     row.Progress.IsIndeterminate = true;
                 }
-                row.Actions.Children.Add(ActionButton("Cancel", false, () => _actions.CancelFunAsr(model.Id)));
+                row.Actions.Children.Add(ActionButton("Cancel download", false, () => _actions.CancelFunAsr(model.Id)));
                 continue;
             }
 
-            bool installed = _funAsr.IsInstalled(model.Id);
             if (installed)
             {
-                row.Status.Text = compatible ? "Installed" : $"Installed - not available for {_draft.Language}";
+                row.Status.Text = !compatible
+                    ? $"Installed - not available for {_draft.Language}"
+                    : willUse
+                        ? active ? "Installed and active" : "Installed - selected for Save"
+                        : "Installed and ready";
                 row.Status.Foreground = compatible ? SuccessBrush : AttentionBrush;
-                bool inUse = selected && _draft.Engine == SpeechEngineKind.FunAsr;
-                if (inUse)
+                if (willUse)
                 {
-                    Button inUseButton = ActionButton("In use", true, () => { });
+                    Button inUseButton = ActionButton(active ? "Active" : "Will use after Save", true, () => { });
                     inUseButton.IsEnabled = false;
                     row.Actions.Children.Add(inUseButton);
                 }
                 else
                 {
-                    Button use = ActionButton("Use", true, () => UseModel(model.Id));
+                    Button use = ActionButton("Use after Save", true, () => UseModel(model.Id));
                     use.IsEnabled = compatible;
                     row.Actions.Children.Add(use);
                     Button remove = ActionButton("Remove", false, () => RemoveModel(model.Id));
@@ -567,9 +691,9 @@ public partial class SettingsWindow : Window
                     : "Not installed";
             row.Status.Foreground = failed || !compatible ? AttentionBrush : MutedBrush;
             row.Actions.Children.Add(ActionButton(
-                failed ? "Retry" : "Download",
+                failed ? "Retry package" : $"Download package · {FormatSize(LocalPackageSize(model))}",
                 failed,
-                () => _ = InstallModelAsync(model.Id, useAfterInstall: false)));
+                () => _ = InstallModelAsync(model.Id)));
         }
     }
 
@@ -586,15 +710,13 @@ public partial class SettingsWindow : Window
         return button;
     }
 
-    private async Task InstallModelAsync(string modelId, bool useAfterInstall)
+    private async Task InstallModelAsync(string modelId)
     {
         FunAsrModelDefinition model = FunAsrModelCatalog.Get(modelId);
         try
         {
-            SetStatus($"Installing {model.DisplayName}...", AttentionBrush);
-            long packageSize = FunAsrModelCatalog.Runtime.Size
-                + FunAsrModelCatalog.Vad.Size
-                + model.DownloadSize;
+            SetStatus($"Preparing {model.DisplayName} package...", AttentionBrush);
+            long packageSize = LocalPackageSize(model);
             _modelProgress[modelId] = new(
                 modelId,
                 FunAsrInstallStage.Downloading,
@@ -602,18 +724,13 @@ public partial class SettingsWindow : Window
                 0,
                 packageSize);
             RefreshModelRows();
+            RefreshDirtyState();
+            _ = Dispatcher.BeginInvoke(new Action(_modelRows[modelId].Progress.BringIntoView));
             await Task.Run(() => _actions.InstallFunAsr(modelId));
             if (_closed)
                 return;
 
-            if (useAfterInstall)
-            {
-                _selectedFunAsrModelId = modelId;
-                EngineCombo.SelectedIndex = 3;
-                Collect();
-            }
             RefreshAll();
-            SetStatus($"{model.DisplayName} is installed.", SuccessBrush);
         }
         catch (OperationCanceledException)
         {
@@ -652,7 +769,7 @@ public partial class SettingsWindow : Window
         }
 
         _selectedFunAsrModelId = modelId;
-        EngineCombo.SelectedIndex = 3;
+        EngineList.SelectedIndex = 3;
         Collect();
         RefreshAll();
     }
@@ -714,23 +831,14 @@ public partial class SettingsWindow : Window
             else
             {
                 RefreshModelRows();
+                RefreshDirtyState();
             }
             if (progress.Stage == FunAsrInstallStage.Failed)
                 SetStatus(progress.Error ?? "FunASR installation failed.", ErrorBrush);
         });
     }
 
-    private async void OnSetUpFunAsr(object sender, RoutedEventArgs e)
-    {
-        if (_funAsr.IsInstalled(FunAsrModelCatalog.DefaultId))
-        {
-            FunAsrNav.IsChecked = true;
-            return;
-        }
-        await InstallModelAsync(FunAsrModelCatalog.DefaultId, useAfterInstall: true);
-    }
-
-    private void OnManageFunAsr(object sender, RoutedEventArgs e) => FunAsrNav.IsChecked = true;
+    private void OnChooseModel(object sender, RoutedEventArgs e) => ModelSelectionNav.IsChecked = true;
 
     private async void OnTest(object sender, RoutedEventArgs e)
     {
@@ -821,7 +929,7 @@ public partial class SettingsWindow : Window
         {
             SetStatus(validation, ErrorBrush);
             if (_draft.Engine == SpeechEngineKind.FunAsr)
-                FunAsrNav.IsChecked = true;
+                ModelSelectionNav.IsChecked = true;
             return;
         }
 
@@ -908,6 +1016,11 @@ public partial class SettingsWindow : Window
         _ => "Windows dictation",
     };
 
+    private static string SelectionDisplay(AppSettings settings, string localModelId) =>
+        settings.Engine == SpeechEngineKind.FunAsr
+            ? $"{FunAsrModelCatalog.Get(FunAsrModelCatalog.NormalizeId(localModelId)).DisplayName} (local)"
+            : VocabularyEngineDisplay(settings.Engine, settings.TranscribeModelKind);
+
     private static string VocabularyEngineDisplay(
         SpeechEngineKind engine,
         TranscribeModelKind modelKind) => engine switch
@@ -945,6 +1058,9 @@ public partial class SettingsWindow : Window
         ? $"{size / 1_000_000_000d:F1} GB"
         : $"{size / 1_000_000d:F0} MB";
 
+    private static long LocalPackageSize(FunAsrModelDefinition model) =>
+        FunAsrModelCatalog.Runtime.Size + FunAsrModelCatalog.Vad.Size + model.DownloadSize;
+
     private static string RuntimeBuild =>
         FunAsrModelCatalog.Runtime.RelativePath.Contains("avx2", StringComparison.OrdinalIgnoreCase)
             ? "AVX2 CPU build"
@@ -954,10 +1070,10 @@ public partial class SettingsWindow : Window
         FunAsrModelDefinition model, FunAsrInstallProgress? progress) => progress?.Stage switch
     {
         FunAsrInstallStage.Downloading when !string.IsNullOrWhiteSpace(progress.Artifact) =>
-            $"Downloading {PackageName(model, progress.Artifact)}",
+            $"Downloading package: {PackageName(model, progress.Artifact)}",
         FunAsrInstallStage.Downloading => "Preparing download",
-        FunAsrInstallStage.Verifying => $"Verifying {PackageName(model, progress.Artifact)}",
-        FunAsrInstallStage.Testing => "Testing local runtime",
+        FunAsrInstallStage.Verifying => $"Verifying package: {PackageName(model, progress.Artifact)}",
+        FunAsrInstallStage.Testing => "Testing installed package",
         _ => "Installing",
     };
 
@@ -967,7 +1083,7 @@ public partial class SettingsWindow : Window
             return string.Empty;
         double percent = Math.Clamp(progress.DownloadedBytes * 100d / progress.TotalBytes.Value, 0, 100);
         string artifact = string.IsNullOrWhiteSpace(progress.Artifact) ? string.Empty : $" · {progress.Artifact}";
-        return $"{FormatTransferSize(progress.DownloadedBytes)} of "
+        return $"Overall: {FormatTransferSize(progress.DownloadedBytes)} of "
             + $"{FormatTransferSize(progress.TotalBytes.Value)} · {percent:F0}%{artifact}";
     }
 

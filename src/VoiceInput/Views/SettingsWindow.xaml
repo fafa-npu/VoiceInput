@@ -167,6 +167,38 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ModelChoiceItem" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="0,0,0,7" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ChoiceBorder" Background="White"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="5" Padding="13,9">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ChoiceBorder" Property="Background" Value="#F4F8F5" />
+                                <Setter TargetName="ChoiceBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ChoiceBorder" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ChoiceBorder" Property="Background" Value="#F7F8F7" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="ChoiceBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ChoiceBorder" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="PageTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="22" />
             <Setter Property="FontWeight" Value="SemiBold" />
@@ -210,14 +242,11 @@
                     <RadioButton x:Name="OverviewNav" GroupName="SetupNavigation" Content="Overview"
                                  Tag="&#xE80F;" Style="{StaticResource NavRadio}" IsChecked="True"
                                  Checked="OnNavigationChanged" />
-                    <RadioButton x:Name="SpeechNav" GroupName="SetupNavigation" Content="Speech"
+                    <RadioButton x:Name="ModelSelectionNav" GroupName="SetupNavigation" Content="Model Selection"
                                  Tag="&#xE720;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
                     <RadioButton x:Name="VocabularyNav" GroupName="SetupNavigation" Content="Vocabulary"
                                  Tag="&#xE8C1;" Style="{StaticResource NavRadio}"
-                                 Checked="OnNavigationChanged" />
-                    <RadioButton x:Name="FunAsrNav" GroupName="SetupNavigation" Content="FunASR"
-                                 Tag="&#xE8F1;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
                     <RadioButton x:Name="RefinementNav" GroupName="SetupNavigation" Content="Refinement"
                                  Tag="&#xE90F;" Style="{StaticResource NavRadio}"
@@ -255,9 +284,9 @@
                                 <TextBlock x:Name="OverviewReadinessText" Foreground="#65615A"
                                            FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button x:Name="SetUpFunAsrButton" Grid.Column="1" Content="Set up FunASR"
+                            <Button x:Name="ChooseModelButton" Grid.Column="1" Content="Choose a model"
                                     Style="{StaticResource PrimaryButton}" Margin="14,0,0,0"
-                                    Click="OnSetUpFunAsr" />
+                                    Click="OnChooseModel" />
                         </Grid>
                     </Border>
 
@@ -323,21 +352,103 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <ScrollViewer x:Name="SpeechPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+            <ScrollViewer x:Name="ModelSelectionPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
-                    <TextBlock Text="Speech" Style="{StaticResource PageTitle}" />
-                    <TextBlock Text="Recognition engine and cloud resource settings"
+                    <TextBlock Text="Model Selection" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="Choose the recognition service or local model used for new dictation sessions."
                                Style="{StaticResource PageSubtitle}" />
 
-                    <TextBlock Text="Speech engine" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
-                    <ComboBox x:Name="EngineCombo" SelectionChanged="OnEngineChanged" MaxWidth="520"
-                              HorizontalAlignment="Stretch">
-                        <ComboBoxItem Content="Windows dictation" />
-                        <ComboBoxItem Content="Azure Speech (streaming)" />
-                        <ComboBoxItem Content="gpt-4o-transcribe (Foundry, batch)" />
-                        <ComboBoxItem Content="FunASR (local, batch)" />
-                    </ComboBox>
+                    <Border x:Name="ModelSelectionStatusBorder"
+                            Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="4,1,1,1"
+                            CornerRadius="5" Padding="13,9" Margin="0,0,0,12">
+                        <TextBlock x:Name="ModelSelectionStatusText" TextWrapping="Wrap" />
+                    </Border>
+
+                    <TextBlock Text="Choose a speech model" Style="{StaticResource SectionTitle}"
+                               Margin="0,0,0,8" />
+                    <ListBox x:Name="EngineList" SelectionChanged="OnEngineChanged"
+                             SelectionMode="Single" BorderThickness="0" Padding="0"
+                             Background="Transparent" HorizontalContentAlignment="Stretch">
+                        <ListBoxItem Tag="Windows" Style="{StaticResource ModelChoiceItem}"
+                                     AutomationProperties.Name="Windows dictation, built into Windows, no setup needed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Windows dictation" FontWeight="SemiBold" />
+                                    <TextBlock Text="Built into Windows. No setup needed."
+                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                               Margin="0,2,12,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="Built in" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                            </Grid>
+                        </ListBoxItem>
+                        <ListBoxItem Tag="Azure" Style="{StaticResource ModelChoiceItem}"
+                                     AutomationProperties.Name="Azure Speech, cloud streaming, requires Azure Speech resource">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Azure Speech" FontWeight="SemiBold" />
+                                    <TextBlock Text="Cloud streaming recognition from Microsoft Azure."
+                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                               Margin="0,2,12,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="Cloud" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                            </Grid>
+                        </ListBoxItem>
+                        <ListBoxItem Tag="GptTranscribe" Style="{StaticResource ModelChoiceItem}"
+                                     AutomationProperties.Name="GPT-4o Transcribe, cloud batch, requires Foundry deployment">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="GPT-4o Transcribe" FontWeight="SemiBold" />
+                                    <TextBlock Text="Cloud transcription from Azure AI Foundry."
+                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                               Margin="0,2,12,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="Cloud" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="11" VerticalAlignment="Center" />
+                            </Grid>
+                        </ListBoxItem>
+                        <ListBoxItem Tag="FunAsr" Style="{StaticResource ModelChoiceItem}"
+                                     AutomationProperties.Name="FunASR local models, runs on this PC, download required">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="FunASR local models" FontWeight="SemiBold" />
+                                    <TextBlock Text="Runs on this PC after a one-time download. No account needed."
+                                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                               Margin="0,2,12,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="Local" Foreground="{StaticResource AccentBrush}"
+                                           FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </Grid>
+                        </ListBoxItem>
+                    </ListBox>
+
+                    <StackPanel x:Name="WindowsFieldsPanel" Margin="0,7,0,0">
+                        <Separator Margin="0,0,0,12" />
+                        <TextBlock Text="Windows dictation" Style="{StaticResource SectionTitle}" />
+                        <Border Background="#FFFAF0" BorderBrush="#E4D4B7" BorderThickness="4,1,1,1"
+                                CornerRadius="5" Padding="13,9">
+                            <TextBlock Text="No setup required. Recognition quality is lower than the other options."
+                                       TextWrapping="Wrap" Foreground="#744A08" />
+                        </Border>
+                    </StackPanel>
 
                     <StackPanel x:Name="AzureFieldsPanel" Margin="0,14,0,0">
                         <Separator Margin="0,0,0,12" />
@@ -432,19 +543,31 @@
                         </Grid>
                     </StackPanel>
 
-                    <Border x:Name="FunAsrSpeechPanel" Visibility="Collapsed" Background="#F4F8F5"
-                            BorderBrush="#BFD2C7" BorderThickness="1" CornerRadius="5"
-                            Padding="14" Margin="0,16,0,0">
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Content="Manage models"
-                                    Style="{StaticResource SecondaryButton}" Click="OnManageFunAsr" />
-                            <StackPanel Margin="0,0,14,0">
-                                <TextBlock x:Name="SpeechFunAsrModelText" FontWeight="SemiBold" />
-                                <TextBlock x:Name="SpeechFunAsrStatusText" Foreground="{StaticResource MutedTextBrush}"
-                                           FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </DockPanel>
-                    </Border>
+                    <StackPanel x:Name="LocalModelsPanel" Visibility="Collapsed" Margin="0,7,0,0">
+                        <Separator Margin="0,0,0,12" />
+                        <TextBlock Text="Local models" Style="{StaticResource SectionTitle}" />
+                        <TextBlock Text="Download only when needed. Each package includes the local runtime, voice activity detector, and selected model. Downloading does not change your active model."
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                                   TextWrapping="Wrap" Margin="0,0,0,11" />
+                        <Border Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="1"
+                                CornerRadius="5" Padding="13,9" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Local runtime" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="FunAsrSummaryText" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="No Python required" VerticalAlignment="Center"
+                                           Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"
+                                           Margin="16,0,0,0" />
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="FunAsrModelsPanel" />
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
 
@@ -516,32 +639,6 @@
                                    Text="Windows dictation, GPT-4o Transcribe Diarize, Other / unknown GPT deployments, and current FunASR local models"
                                    TextWrapping="Wrap" Margin="0,3,0,0" />
                     </Grid>
-                </StackPanel>
-            </ScrollViewer>
-
-            <ScrollViewer x:Name="FunAsrPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <StackPanel>
-                    <TextBlock Text="FunASR" Style="{StaticResource PageTitle}" />
-                    <TextBlock Text="App-managed local runtime and on-demand models"
-                               Style="{StaticResource PageSubtitle}" />
-                    <Border Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="1"
-                            CornerRadius="5" Padding="14,11" Margin="0,0,0,14">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Local runtime" FontWeight="SemiBold" />
-                                <TextBlock x:Name="FunAsrSummaryText" Foreground="{StaticResource MutedTextBrush}"
-                                           FontSize="12" Margin="0,3,0,0" />
-                            </StackPanel>
-                            <TextBlock Grid.Column="1" Text="No Python or local server" VerticalAlignment="Center"
-                                       Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" Margin="16,0,0,0" />
-                        </Grid>
-                    </Border>
-                    <StackPanel x:Name="FunAsrModelsPanel" />
                 </StackPanel>
             </ScrollViewer>
 
@@ -661,7 +758,8 @@
                 <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"
                            Text="Settings saved" TextWrapping="Wrap" />
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Cancel" Style="{StaticResource SecondaryButton}" Width="86"
+                    <Button x:Name="CancelButton" Content="Close" Style="{StaticResource SecondaryButton}"
+                            MinWidth="86"
                             Click="OnCancel" />
                     <Button x:Name="SaveButton" Content="Save changes" Style="{StaticResource PrimaryButton}"
                             MinWidth="112" Margin="8,0,0,0" Click="OnSave" IsEnabled="False" />
