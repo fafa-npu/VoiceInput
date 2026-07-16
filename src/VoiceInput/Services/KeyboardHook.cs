@@ -23,6 +23,8 @@ public sealed class KeyboardHook : IDisposable
     public event Action? Engaged;
     /// <summary>PTT key released cleanly — finalize dictation.</summary>
     public event Action? Released;
+    /// <summary>The watchdog observed that a missed key-up left the PTT key logically held.</summary>
+    public event Action? RecoveredRelease;
     /// <summary>A chord was detected while PTT was held — abort dictation.</summary>
     public event Action? Cancelled;
     /// <summary>Enter pressed — used as a "done editing" signal to capture corrections.</summary>
@@ -65,7 +67,7 @@ public sealed class KeyboardHook : IDisposable
 
         // Runs on the UI thread (where Install is called); GetAsyncKeyState polling and
         // re-installing the hook both require that context.
-        _watchdog = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _watchdog = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _watchdog.Tick += Watchdog;
         _watchdog.Start();
     }
@@ -152,22 +154,28 @@ public sealed class KeyboardHook : IDisposable
     {
         if (_pttDown)
         {
-            // Reconcile a key-up the hook never saw (secure desktop, focus loss, another hook).
-            bool physicallyDown = (_getAsyncKeyState(_pttVk) & 0x8000) != 0;
-            if (!physicallyDown)
-            {
-                bool fireReleased = !_chorded;
-                _pttDown = false;
-                _chorded = false;
-                if (fireReleased) Released?.Invoke();   // chorded sessions were already cancelled
-            }
+            ReconcileKeyState();
             _idleTicks = 0;
         }
-        else if (++_idleTicks >= 10)   // ~5s idle: re-assert the hook in case Windows silently dropped it
+        else if (++_idleTicks >= 50)   // ~5s idle: re-assert the hook in case Windows silently dropped it
         {
             _idleTicks = 0;
             Reinstall();
         }
+    }
+
+    internal void ReconcileKeyState()
+    {
+        if (!_pttDown || (_getAsyncKeyState(_pttVk) & 0x8000) != 0)
+            return;
+
+        // Keep recovered releases distinct so the controller can handle them immediately instead
+        // of letting a stale release queue behind a newer physical gesture.
+        bool fireRecoveredRelease = !_chorded;
+        _pttDown = false;
+        _chorded = false;
+        if (fireRecoveredRelease)
+            RecoveredRelease?.Invoke();   // chorded sessions were already cancelled
     }
 
     private void Reinstall()

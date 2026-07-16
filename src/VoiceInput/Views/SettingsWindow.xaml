@@ -213,6 +213,9 @@
                     <RadioButton x:Name="SpeechNav" GroupName="SetupNavigation" Content="Speech"
                                  Tag="&#xE720;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
+                    <RadioButton x:Name="VocabularyNav" GroupName="SetupNavigation" Content="Vocabulary"
+                                 Tag="&#xE8C1;" Style="{StaticResource NavRadio}"
+                                 Checked="OnNavigationChanged" />
                     <RadioButton x:Name="FunAsrNav" GroupName="SetupNavigation" Content="FunASR"
                                  Tag="&#xE8F1;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
@@ -402,6 +405,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="Authentication" Style="{StaticResource FieldLabel}" />
                             <ComboBox x:Name="TranscribeAuthCombo" Grid.Row="0" Grid.Column="1"
@@ -411,13 +415,20 @@
                             </ComboBox>
                             <TextBlock Grid.Row="1" Text="Endpoint" Style="{StaticResource FieldLabel}" />
                             <TextBox x:Name="TranscribeEndpointBox" Grid.Row="1" Grid.Column="1" />
-                            <TextBlock Grid.Row="2" Text="Deployment" Style="{StaticResource FieldLabel}" />
-                            <TextBox x:Name="TranscribeModelBox" Grid.Row="2" Grid.Column="1" />
-                            <TextBlock x:Name="TranscribeApiKeyLabel" Grid.Row="3" Text="API key" Style="{StaticResource FieldLabel}" />
-                            <PasswordBox x:Name="TranscribeApiKeyBox" Grid.Row="3" Grid.Column="1"
+                            <TextBlock Grid.Row="2" Text="Model" Style="{StaticResource FieldLabel}" />
+                            <ComboBox x:Name="TranscribeModelKindCombo" Grid.Row="2" Grid.Column="1">
+                                <ComboBoxItem Content="GPT-4o Transcribe" />
+                                <ComboBoxItem Content="GPT-4o Mini Transcribe" />
+                                <ComboBoxItem Content="GPT-4o Transcribe Diarize (vocabulary unavailable)" />
+                                <ComboBoxItem Content="Other / unknown" />
+                            </ComboBox>
+                            <TextBlock Grid.Row="3" Text="Deployment" Style="{StaticResource FieldLabel}" />
+                            <TextBox x:Name="TranscribeModelBox" Grid.Row="3" Grid.Column="1" />
+                            <TextBlock x:Name="TranscribeApiKeyLabel" Grid.Row="4" Text="API key" Style="{StaticResource FieldLabel}" />
+                            <PasswordBox x:Name="TranscribeApiKeyBox" Grid.Row="4" Grid.Column="1"
                                          AutomationProperties.LabeledBy="{Binding ElementName=TranscribeApiKeyLabel}" />
-                            <TextBlock x:Name="TranscribeTenantLabel" Grid.Row="4" Text="Tenant ID" Style="{StaticResource FieldLabel}" />
-                            <TextBox x:Name="TranscribeTenantIdBox" Grid.Row="4" Grid.Column="1" />
+                            <TextBlock x:Name="TranscribeTenantLabel" Grid.Row="5" Text="Tenant ID" Style="{StaticResource FieldLabel}" />
+                            <TextBox x:Name="TranscribeTenantIdBox" Grid.Row="5" Grid.Column="1" />
                         </Grid>
                     </StackPanel>
 
@@ -434,6 +445,77 @@
                             </StackPanel>
                         </DockPanel>
                     </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer x:Name="VocabularyPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock Text="Vocabulary" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="Shared recognition hints for supported speech engines"
+                               Style="{StaticResource PageSubtitle}" />
+
+                    <Border x:Name="VocabularyEngineStatusBorder"
+                            Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="4,1,1,1"
+                            CornerRadius="5" Padding="14,11" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="135" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Current speech engine" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="11" />
+                                <TextBlock x:Name="VocabularyCurrentEngineText" FontWeight="SemiBold"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="VocabularyModeText" Grid.Column="1"
+                                       Margin="14,0,0,0" VerticalAlignment="Center"
+                                       FontSize="12" TextAlignment="Left" TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="VocabularyTermsLabel" Text="Recognition terms"
+                               Style="{StaticResource SectionTitle}"
+                               Margin="0,0,0,5" />
+                    <TextBlock x:Name="VocabularySeparatorHintText"
+                               Text="Separate terms with commas, semicolons, or new lines. Spaces inside a term are preserved."
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                               TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBox x:Name="VocabularyBox" Height="130" AcceptsReturn="True"
+                             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             VerticalContentAlignment="Top"
+                             AutomationProperties.LabeledBy="{Binding ElementName=VocabularyTermsLabel}" />
+                    <DockPanel Margin="0,7,16,0">
+                        <TextBlock x:Name="VocabularyCountText" DockPanel.Dock="Left"
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                        <TextBlock Text="Stored locally - no local limit"
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                   TextAlignment="Right" />
+                    </DockPanel>
+
+                    <Separator Margin="0,20,0,10" />
+                    <TextBlock Text="Model support" Style="{StaticResource SectionTitle}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="112" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Supported" Foreground="{StaticResource AccentBrush}"
+                                   FontWeight="SemiBold" Margin="0,3,14,8" />
+                        <TextBlock x:Name="VocabularySupportedModelsText" Grid.Row="0" Grid.Column="1"
+                                   Text="Azure Speech (Phrase List, first 500), GPT-4o Transcribe and GPT-4o Mini Transcribe (prompt)"
+                                   TextWrapping="Wrap" Margin="0,3,0,8" />
+                        <TextBlock Grid.Row="1" Text="Not supported" Foreground="#8C5709"
+                                   FontWeight="SemiBold" Margin="0,3,14,0" />
+                        <TextBlock x:Name="VocabularyUnsupportedModelsText" Grid.Row="1" Grid.Column="1"
+                                   Text="Windows dictation, GPT-4o Transcribe Diarize, Other / unknown GPT deployments, and current FunASR local models"
+                                   TextWrapping="Wrap" Margin="0,3,0,0" />
+                    </Grid>
                 </StackPanel>
             </ScrollViewer>
 
@@ -549,7 +631,8 @@
                     <TextBlock Text="Privacy and learning" Style="{StaticResource SectionTitle}" />
                     <CheckBox x:Name="UseContextBox" Content="Use surrounding app context for LLM refinement" />
                     <CheckBox x:Name="LearnFromEditsBox" Content="Learn correction rules from my edits" />
-                    <CheckBox x:Name="DiagnosticLoggingBox" Content="Log transcript text for diagnostics" />
+                    <CheckBox x:Name="DiagnosticLoggingBox"
+                              Content="Log transcript, vocabulary, and LLM output for diagnostics" />
 
                     <Separator Margin="0,18,0,10" />
                     <TextBlock Text="Maintenance" Style="{StaticResource SectionTitle}" />

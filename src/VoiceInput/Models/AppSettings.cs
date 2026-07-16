@@ -72,6 +72,12 @@ public sealed class AppSettings
     /// <summary>Deployment name of the transcription model.</summary>
     public string TranscribeModel { get; set; } = "gpt-4o-transcribe";
 
+    /// <summary>Capability metadata for the model behind the configured deployment.</summary>
+    public TranscribeModelKind TranscribeModelKind { get; set; } = TranscribeModelKind.Gpt4oTranscribe;
+
+    /// <summary>Names and domain terms supplied to recognition engines that support vocabulary hints.</summary>
+    public string[] RecognitionVocabulary { get; set; } = [];
+
     /// <summary>Key or Microsoft Entra ID auth for the Foundry transcription resource. Default Entra.</summary>
     public AzureAuthMode TranscribeAuthMode { get; set; } = AzureAuthMode.EntraId;
 
@@ -105,7 +111,12 @@ public sealed class AppSettings
     /// content (which may be sensitive) to the LLM.</summary>
     public bool UseContext { get; set; }
 
-    public AppSettings Clone() => (AppSettings)MemberwiseClone();
+    public AppSettings Clone()
+    {
+        var clone = (AppSettings)MemberwiseClone();
+        clone.RecognitionVocabulary = (string[])RecognitionVocabulary.Clone();
+        return clone;
+    }
 
     /// <summary>The five recognition languages offered in the tray menu.</summary>
     public static readonly (string Code, string Display)[] SupportedLanguages =

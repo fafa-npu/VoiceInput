@@ -10,7 +10,7 @@ using WinForms = System.Windows.Forms;
 
 namespace VoiceInput;
 
-internal enum PttGesture { Engaged, Released, Cancelled }
+internal enum PttGesture { Engaged, Released, Cancelled, RecoveredRelease }
 internal enum PttGestureAction { None, Start, Stop, Cancel, Busy }
 
 /// <summary>
@@ -73,6 +73,9 @@ public sealed class AppController : IDisposable
         _hook = new KeyboardHook(_settings.PttKey);
         _hook.Engaged += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Engaged));
         _hook.Released += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Released));
+        // RecoveredRelease is raised by the UI-thread watchdog. Handle it immediately so a missed
+        // key-up cannot sit in the dispatcher queue behind the user's next Ctrl gesture.
+        _hook.RecoveredRelease += () => HandlePttGesture(PttGesture.RecoveredRelease);
         _hook.Cancelled += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Cancelled));
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
 
@@ -91,7 +94,8 @@ public sealed class AppController : IDisposable
 
         if (mode == PttMode.Toggle)
         {
-            if (gesture != PttGesture.Released) return PttGestureAction.None;
+            if (gesture is not (PttGesture.Released or PttGesture.RecoveredRelease))
+                return PttGestureAction.None;
             if (busy) return PttGestureAction.Busy;
             return dictating ? PttGestureAction.Stop : PttGestureAction.Start;
         }
@@ -100,7 +104,7 @@ public sealed class AppController : IDisposable
         {
             PttGesture.Engaged when busy => PttGestureAction.Busy,
             PttGesture.Engaged => PttGestureAction.Start,
-            PttGesture.Released => PttGestureAction.Stop,
+            PttGesture.Released or PttGesture.RecoveredRelease => PttGestureAction.Stop,
             PttGesture.Cancelled => PttGestureAction.Cancel,
             _ => PttGestureAction.None,
         };
@@ -481,6 +485,8 @@ public sealed class AppController : IDisposable
 
     private ISpeechEngine CreateEngine(out bool azureFellBack)
     {
+        RecognitionVocabularyEvaluation vocabulary = RecognitionVocabulary.Evaluate(_settings);
+        Log.Write(RecognitionVocabulary.FormatSessionLog(_settings, vocabulary));
         azureFellBack = false;
         switch (_settings.Engine)
         {
@@ -490,11 +496,15 @@ public sealed class AppController : IDisposable
                     if (!string.IsNullOrWhiteSpace(_settings.AzureEndpoint))
                         return AzureSpeechEngine.ForEntra(
                             _settings.AzureEndpoint,
-                            EntraCredentialFactory.Create(_settings.AzureTenantId));
+                            EntraCredentialFactory.Create(_settings.AzureTenantId),
+                            vocabulary.Entries);
                 }
                 else if (!string.IsNullOrWhiteSpace(_settings.AzureKey) && !string.IsNullOrWhiteSpace(_settings.AzureRegion))
                 {
-                    return AzureSpeechEngine.ForKey(_settings.AzureKey, _settings.AzureRegion);
+                    return AzureSpeechEngine.ForKey(
+                        _settings.AzureKey,
+                        _settings.AzureRegion,
+                        vocabulary.Entries);
                 }
                 azureFellBack = true;
                 throw new InvalidOperationException(_settings.AzureAuthMode == AzureAuthMode.Key
@@ -507,14 +517,19 @@ public sealed class AppController : IDisposable
                     if (_settings.TranscribeAuthMode == AzureAuthMode.Key)
                     {
                         if (!string.IsNullOrWhiteSpace(_settings.TranscribeApiKey))
-                            return OpenAiTranscribeEngine.ForKey(_settings.TranscribeEndpoint, _settings.TranscribeModel, _settings.TranscribeApiKey);
+                            return OpenAiTranscribeEngine.ForKey(
+                                _settings.TranscribeEndpoint,
+                                _settings.TranscribeModel,
+                                _settings.TranscribeApiKey,
+                                vocabulary.Entries);
                     }
                     else
                     {
                         return OpenAiTranscribeEngine.ForEntra(
                             _settings.TranscribeEndpoint,
                             _settings.TranscribeModel,
-                            EntraCredentialFactory.Create(_settings.TranscribeTenantId));
+                            EntraCredentialFactory.Create(_settings.TranscribeTenantId),
+                            vocabulary.Entries);
                     }
                 }
                 azureFellBack = true;

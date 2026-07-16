@@ -6,6 +6,37 @@ namespace VoiceInput.Tests;
 public sealed class KeyboardHookTests
 {
     [Fact]
+    public void MissedKeyUpRecoveryKeepsTheNextPressIndependent()
+    {
+        using var hook = new KeyboardHook("LeftCtrl", _ => 0);
+        var events = CaptureEvents(hook);
+        hook.RecoveredRelease += () => events.Add("recovered");
+
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: true, isUp: false);
+        hook.ReconcileKeyState();
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: true, isUp: false);
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: false, isUp: true);
+
+        Assert.Equal(["engaged", "recovered", "engaged", "released"], events);
+    }
+
+    [Fact]
+    public void ChordedMissedKeyUpDoesNotRaiseRecoveredRelease()
+    {
+        using var hook = new KeyboardHook("LeftCtrl", _ => 0);
+        var events = CaptureEvents(hook);
+        hook.RecoveredRelease += () => events.Add("recovered");
+
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: true, isUp: false);
+        hook.ProcessKeyEvent(VK_V, isDown: true, isUp: false);
+        hook.ReconcileKeyState();
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: true, isUp: false);
+        hook.ProcessKeyEvent(VK_LCONTROL, isDown: false, isUp: true);
+
+        Assert.Equal(["engaged", "cancelled", "engaged", "released"], events);
+    }
+
+    [Fact]
     public void IgnoresPttGestureWhenAnotherKeyWasAlreadyHeld()
     {
         var heldKeys = new HashSet<int> { VK_V };

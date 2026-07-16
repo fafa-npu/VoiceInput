@@ -65,9 +65,11 @@ public partial class SettingsWindow : Window
         AzureEndpointBox.Text = _draft.AzureEndpoint;
         AzureTenantIdBox.Text = _draft.AzureTenantId;
         TranscribeEndpointBox.Text = _draft.TranscribeEndpoint;
+        TranscribeModelKindCombo.SelectedIndex = TranscribeModelKindIndex(_draft.TranscribeModelKind);
         TranscribeModelBox.Text = _draft.TranscribeModel;
         TranscribeApiKeyBox.Password = _draft.TranscribeApiKey;
         TranscribeTenantIdBox.Text = _draft.TranscribeTenantId;
+        VocabularyBox.Text = string.Join(", ", _draft.RecognitionVocabulary);
         LlmEnabledBox.IsChecked = _draft.LlmEnabled;
         LlmBaseUrlBox.Text = _draft.LlmBaseUrl;
         LlmApiKeyBox.Password = _draft.LlmApiKey;
@@ -101,6 +103,7 @@ public partial class SettingsWindow : Window
             TranscribeEndpointBox,
             TranscribeModelBox,
             TranscribeTenantIdBox,
+            VocabularyBox,
             LlmBaseUrlBox,
             LlmModelBox,
             LlmPromptBox,
@@ -115,6 +118,7 @@ public partial class SettingsWindow : Window
         LanguageCombo.SelectionChanged += OnDraftValueChanged;
         PttModeCombo.SelectionChanged += OnDraftValueChanged;
         PttCombo.SelectionChanged += OnDraftValueChanged;
+        TranscribeModelKindCombo.SelectionChanged += OnDraftValueChanged;
         LlmEnabledBox.Click += OnDraftValueChanged;
         UseContextBox.Click += OnSensitiveSettingChanged;
         LearnFromEditsBox.Click += OnSensitiveSettingChanged;
@@ -123,7 +127,7 @@ public partial class SettingsWindow : Window
 
     private void OnNavigationChanged(object sender, RoutedEventArgs e)
     {
-        if (OverviewPage is null || SpeechPage is null || FunAsrPage is null
+        if (OverviewPage is null || SpeechPage is null || VocabularyPage is null || FunAsrPage is null
             || RefinementPage is null || AppPage is null)
         {
             return;
@@ -131,6 +135,7 @@ public partial class SettingsWindow : Window
 
         OverviewPage.Visibility = sender == OverviewNav ? Visibility.Visible : Visibility.Collapsed;
         SpeechPage.Visibility = sender == SpeechNav ? Visibility.Visible : Visibility.Collapsed;
+        VocabularyPage.Visibility = sender == VocabularyNav ? Visibility.Visible : Visibility.Collapsed;
         FunAsrPage.Visibility = sender == FunAsrNav ? Visibility.Visible : Visibility.Collapsed;
         RefinementPage.Visibility = sender == RefinementNav ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = sender == AppNav ? Visibility.Visible : Visibility.Collapsed;
@@ -180,7 +185,7 @@ public partial class SettingsWindow : Window
                 ? "VoiceInput will read text from the focused app with UI Automation and send it to your configured LLM."
                 : checkBox == LearnFromEditsBox
                     ? "After insertion, Enter may capture the same input control. Up to 100 encrypted correction samples are stored locally."
-                    : "Full transcripts and LLM output may contain sensitive data and will be written in plaintext to the diagnostic log.";
+                    : "Full transcripts, recognition vocabulary, and LLM output may contain sensitive data and will be written in plaintext to the diagnostic log.";
             if (MessageBox.Show(
                     warning,
                     "Enable this setting?",
@@ -237,9 +242,17 @@ public partial class SettingsWindow : Window
         _draft.AzureEndpoint = AzureEndpointBox.Text.Trim();
         _draft.AzureTenantId = AzureTenantIdBox.Text.Trim();
         _draft.TranscribeEndpoint = TranscribeEndpointBox.Text.Trim();
+        _draft.TranscribeModelKind = TranscribeModelKindCombo.SelectedIndex switch
+        {
+            0 => TranscribeModelKind.Gpt4oTranscribe,
+            1 => TranscribeModelKind.Gpt4oMiniTranscribe,
+            2 => TranscribeModelKind.Gpt4oTranscribeDiarize,
+            _ => TranscribeModelKind.Unknown,
+        };
         _draft.TranscribeModel = TranscribeModelBox.Text.Trim();
         _draft.TranscribeApiKey = TranscribeApiKeyBox.Password;
         _draft.TranscribeTenantId = TranscribeTenantIdBox.Text.Trim();
+        _draft.RecognitionVocabulary = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries;
         _draft.LlmEnabled = LlmEnabledBox.IsChecked == true;
         _draft.LlmBaseUrl = LlmBaseUrlBox.Text.Trim();
         _draft.LlmApiKey = LlmApiKeyBox.Password;
@@ -257,8 +270,42 @@ public partial class SettingsWindow : Window
     {
         RefreshOverview();
         RefreshSpeechSummary();
+        RefreshVocabulary();
         RefreshModelRows();
         RefreshDirtyState();
+    }
+
+    private void RefreshVocabulary()
+    {
+        RecognitionVocabularyNormalization vocabulary = RecognitionVocabulary.Parse(VocabularyBox.Text);
+        VocabularyCountText.Text = vocabulary.AcceptedCount == 1
+            ? "1 term"
+            : $"{vocabulary.AcceptedCount} terms";
+
+        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(
+            _draft.Engine,
+            _draft.TranscribeModelKind);
+        string current = VocabularyEngineDisplay(_draft.Engine, _draft.TranscribeModelKind);
+        VocabularyCurrentEngineText.Text = current;
+        VocabularyModeText.Text = mode switch
+        {
+            RecognitionVocabularyMode.PhraseList
+                when vocabulary.AcceptedCount > AzureSpeechEngine.MaxVocabularyPhrases =>
+                    $"First {AzureSpeechEngine.MaxVocabularyPhrases} of {vocabulary.AcceptedCount} terms "
+                    + "will be used as an Azure Phrase List",
+            RecognitionVocabularyMode.PhraseList => "Used as an Azure Phrase List",
+            RecognitionVocabularyMode.Prompt => "Used as a transcription prompt",
+            _ => "Not supported. Use Azure Speech, GPT-4o Transcribe, or Mini.",
+        };
+        VocabularyModeText.Foreground = mode == RecognitionVocabularyMode.None
+            ? AttentionBrush
+            : SuccessBrush;
+        VocabularyEngineStatusBorder.Background = mode == RecognitionVocabularyMode.None
+            ? new SolidColorBrush(Color.FromRgb(255, 250, 240))
+            : new SolidColorBrush(Color.FromRgb(244, 248, 245));
+        VocabularyEngineStatusBorder.BorderBrush = mode == RecognitionVocabularyMode.None
+            ? new SolidColorBrush(Color.FromRgb(228, 212, 183))
+            : new SolidColorBrush(Color.FromRgb(191, 210, 199));
     }
 
     private void RefreshOverview()
@@ -845,6 +892,14 @@ public partial class SettingsWindow : Window
         _ => 0,
     };
 
+    private static int TranscribeModelKindIndex(TranscribeModelKind modelKind) => modelKind switch
+    {
+        TranscribeModelKind.Gpt4oTranscribe => 0,
+        TranscribeModelKind.Gpt4oMiniTranscribe => 1,
+        TranscribeModelKind.Gpt4oTranscribeDiarize => 2,
+        _ => 3,
+    };
+
     private static string EngineDisplay(SpeechEngineKind engine) => engine switch
     {
         SpeechEngineKind.Azure => "Azure Speech",
@@ -852,6 +907,20 @@ public partial class SettingsWindow : Window
         SpeechEngineKind.FunAsr => "FunASR (local)",
         _ => "Windows dictation",
     };
+
+    private static string VocabularyEngineDisplay(
+        SpeechEngineKind engine,
+        TranscribeModelKind modelKind) => engine switch
+        {
+            SpeechEngineKind.GptTranscribe => modelKind switch
+            {
+                TranscribeModelKind.Gpt4oTranscribe => "GPT-4o Transcribe",
+                TranscribeModelKind.Gpt4oMiniTranscribe => "GPT-4o Mini Transcribe",
+                TranscribeModelKind.Gpt4oTranscribeDiarize => "GPT-4o Transcribe Diarize",
+                _ => "Other / unknown",
+            },
+            _ => EngineDisplay(engine),
+        };
 
     private static string PttDisplay(string key) => key switch
     {
@@ -941,7 +1010,9 @@ public partial class SettingsWindow : Window
         && left.AzureEndpoint == right.AzureEndpoint
         && left.AzureTenantId == right.AzureTenantId
         && left.TranscribeEndpoint == right.TranscribeEndpoint
+        && left.TranscribeModelKind == right.TranscribeModelKind
         && left.TranscribeModel == right.TranscribeModel
+        && left.RecognitionVocabulary.SequenceEqual(right.RecognitionVocabulary)
         && left.TranscribeAuthMode == right.TranscribeAuthMode
         && left.TranscribeApiKey == right.TranscribeApiKey
         && left.TranscribeTenantId == right.TranscribeTenantId
