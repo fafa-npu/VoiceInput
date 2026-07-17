@@ -19,8 +19,7 @@ internal sealed record SettingsWindowActions(
     Func<string, Task> InstallFunAsr,
     Action<string> CancelFunAsr,
     Func<string?> ActiveFunAsrModelId,
-    Func<AppSettings, Task<string[]>> ExtractVocabularyFromCorrections,
-    Func<IReadOnlyList<string>, bool> ConfirmVocabularySuggestions);
+    Func<AppSettings, Task<string[]>> ExtractVocabularyFromCorrections);
 
 public partial class SettingsWindow : Window
 {
@@ -276,13 +275,6 @@ public partial class SettingsWindow : Window
                 VocabularySuggestionStatusText.Text = "No recurring terms found.";
                 return;
             }
-            if (!_actions.ConfirmVocabularySuggestions(candidates))
-            {
-                VocabularySuggestionStatusText.Text = "Suggestions not added.";
-                Log.Write($"Vocabulary suggestions dismissed candidateCount={candidates.Length}.");
-                return;
-            }
-
             string[] current = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries;
             string[] merged = RecognitionVocabulary.Normalize(current.Concat(candidates)).Entries;
             int added = merged.Length - current.Length;
@@ -294,8 +286,9 @@ public partial class SettingsWindow : Window
 
             VocabularyBox.Text = string.Join(", ", merged);
             VocabularySuggestionStatusText.Foreground = SuccessBrush;
-            VocabularySuggestionStatusText.Text = $"Added {added} term{(added == 1 ? string.Empty : "s")}. Save changes to apply.";
-            Log.Write($"Vocabulary suggestions accepted candidateCount={candidates.Length} added={added}.");
+            VocabularySuggestionStatusText.Text =
+                $"Added {added} suggestion{(added == 1 ? string.Empty : "s")} for review. Save changes to apply.";
+            Log.Write($"Vocabulary suggestions staged candidateCount={candidates.Length} added={added}.");
         }
         catch (Exception exception)
         {

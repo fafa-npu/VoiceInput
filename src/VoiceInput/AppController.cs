@@ -908,8 +908,7 @@ public sealed class AppController : IDisposable
             InstallFunAsrAsync,
             CancelFunAsrInstall,
             ActiveFunAsrModelId,
-            ExtractVocabularyFromCorrectionsAsync,
-            ConfirmVocabularySuggestions));
+            ExtractVocabularyFromCorrectionsAsync));
         if (firstRun is not null)
         {
             win.Owner = firstRun;
@@ -1100,13 +1099,6 @@ public sealed class AppController : IDisposable
         Log.Write($"Vocabulary learning completed candidateCount={candidates.Length}.");
         return candidates;
     }
-
-    private static bool ConfirmVocabularySuggestions(IReadOnlyList<string> candidates) =>
-        MessageBox.Show(
-            "Add these terms to Recognition Vocabulary?\n\n" + string.Join("\n", candidates.Select(term => $"- {term}")),
-            "gujiguji - vocabulary suggestions",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question) == MessageBoxResult.Yes;
 
     private void Notify(string title, string message) =>
         _tray?.ShowBalloonTip(6000, title, message, WinForms.ToolTipIcon.Info);

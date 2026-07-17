@@ -31,6 +31,17 @@ public sealed class LlmRefinerVocabularyTests
         Assert.Equal(["Jaws", "Daybreak"], result);
     }
 
+    [Fact]
+    public void ParsesMoreThanTwentyVocabularyCandidates()
+    {
+        string[] candidates = Enumerable.Range(1, 50).Select(index => $"Term {index}").ToArray();
+        string response = System.Text.Json.JsonSerializer.Serialize(candidates.Append("term 1"));
+
+        string[] result = LlmRefiner.ParseVocabularyCandidates(response);
+
+        Assert.Equal(candidates, result);
+    }
+
     [Theory]
     [InlineData("{\"term\":\"Jaws\"}")]
     [InlineData("[\"ok\", 42]")]

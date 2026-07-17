@@ -49,8 +49,7 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()),
-            _ => false);
+            _ => Task.FromResult(Array.Empty<string>()));
         string[] terms = Enumerable.Range(1, 250)
             .Select(index => $"Term {index}")
             .ToArray();
@@ -142,8 +141,6 @@ public sealed class SettingsWindowLayoutTests
             () => long.MaxValue,
             (_, _) => Task.CompletedTask);
         var suggestions = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        bool confirmSuggestions = true;
-        IReadOnlyList<string>? previewedSuggestions = null;
         AppSettings? vocabularyRequestSettings = null;
         var actions = new SettingsWindowActions(
             () => false,
@@ -162,11 +159,6 @@ public sealed class SettingsWindowLayoutTests
             {
                 vocabularyRequestSettings = requestSettings;
                 return suggestions.Task;
-            },
-            candidates =>
-            {
-                previewedSuggestions = candidates;
-                return confirmSuggestions;
             });
         AppSettings? savedSettings = null;
         var settings = new AppSettings
@@ -198,6 +190,7 @@ public sealed class SettingsWindowLayoutTests
             var supported = Assert.IsType<TextBlock>(window.FindName("VocabularySupportedModelsText"));
             var unsupported = Assert.IsType<TextBlock>(window.FindName("VocabularyUnsupportedModelsText"));
             var suggestVocabulary = Assert.IsType<Button>(window.FindName("SuggestVocabularyButton"));
+            var suggestionStatus = Assert.IsType<TextBlock>(window.FindName("VocabularySuggestionStatusText"));
             var useContext = Assert.IsType<CheckBox>(window.FindName("UseContextBox"));
             var learnFromEdits = Assert.IsType<CheckBox>(window.FindName("LearnFromEditsBox"));
             var useContextHelp = Assert.IsType<TextBlock>(window.FindName("UseContextHelpText"));
@@ -260,20 +253,17 @@ public sealed class SettingsWindowLayoutTests
             suggestVocabulary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Assert.False(suggestVocabulary.IsEnabled);
             vocabulary.Text = "Existing term, Added while waiting";
-            suggestions.SetResult(["Existing term", "New Product"]);
+            string[] learnedTerms = Enumerable.Range(1, 24).Select(index => $"Learned term {index}").ToArray();
+            suggestions.SetResult(["Existing term", .. learnedTerms]);
             Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
             Assert.True(Assert.IsType<AppSettings>(vocabularyRequestSettings).LlmEnabled);
-            Assert.Equal(["Existing term", "New Product"], previewedSuggestions);
-            Assert.Equal("Existing term, Added while waiting, New Product", vocabulary.Text);
+            Assert.Equal(
+                ["Existing term", "Added while waiting", .. learnedTerms],
+                RecognitionVocabulary.Parse(vocabulary.Text).Entries);
+            Assert.Contains("24 suggestions", suggestionStatus.Text, StringComparison.Ordinal);
+            Assert.Contains("Save", suggestionStatus.Text, StringComparison.Ordinal);
+            Assert.Null(savedSettings);
             Assert.True(suggestVocabulary.IsEnabled);
-
-            confirmSuggestions = false;
-            suggestions = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-            string beforeCancel = vocabulary.Text;
-            suggestVocabulary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            suggestions.SetResult(["Cancelled term"]);
-            Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
-            Assert.Equal(beforeCancel, vocabulary.Text);
 
             vocabulary.Text = "Existing term";
             llmModel.Text = string.Empty;
@@ -368,8 +358,7 @@ public sealed class SettingsWindowLayoutTests
             },
             _ => pendingInstall.TrySetCanceled(),
             () => activeModel,
-            _ => Task.FromResult(Array.Empty<string>()),
-            _ => false);
+            _ => Task.FromResult(Array.Empty<string>()));
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -483,8 +472,7 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()),
-            _ => false);
+            _ => Task.FromResult(Array.Empty<string>()));
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -554,8 +542,7 @@ public sealed class SettingsWindowLayoutTests
             },
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()),
-            _ => false);
+            _ => Task.FromResult(Array.Empty<string>()));
         AppSettings? savedSettings = null;
         var window = new SettingsWindow(new AppSettings(), settings => savedSettings = settings, manager, actions)
         {
