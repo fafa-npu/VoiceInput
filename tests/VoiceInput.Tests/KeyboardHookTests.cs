@@ -87,6 +87,54 @@ public sealed class KeyboardHookTests
         Assert.Equal(["engaged", "released"], events);
     }
 
+    [Fact]
+    public void ProfileSwitchShortcutFiresOncePerChord()
+    {
+        var heldKeys = new HashSet<int> { VK_MENU, VK_SHIFT };
+        using var hook = new KeyboardHook("RightCtrl", KeyStateFrom(heldKeys));
+        int switches = 0;
+        hook.ProfileSwitchRequested += () => switches++;
+
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+        hook.ProcessKeyEvent(0x47, isDown: false, isUp: true);
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+
+        Assert.Equal(2, switches);
+    }
+
+    [Fact]
+    public void ProfileSwitchShortcutCancelsAnActivePttGesture()
+    {
+        var heldKeys = new HashSet<int>();
+        using var hook = new KeyboardHook("RightCtrl", KeyStateFrom(heldKeys));
+        var events = CaptureEvents(hook);
+        hook.ProfileSwitchRequested += () => events.Add("switch");
+
+        heldKeys.Add(VK_RCONTROL);
+        hook.ProcessKeyEvent(VK_RCONTROL, isDown: true, isUp: false);
+        heldKeys.Add(VK_MENU);
+        heldKeys.Add(VK_SHIFT);
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+
+        Assert.Equal(["engaged", "cancelled", "switch"], events);
+    }
+
+    [Fact]
+    public void MissedProfileShortcutKeyUpIsRecovered()
+    {
+        var heldKeys = new HashSet<int> { VK_MENU, VK_SHIFT };
+        using var hook = new KeyboardHook("RightCtrl", KeyStateFrom(heldKeys));
+        int switches = 0;
+        hook.ProfileSwitchRequested += () => switches++;
+
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+        hook.ReconcileKeyState();
+        hook.ProcessKeyEvent(0x47, isDown: true, isUp: false);
+
+        Assert.Equal(2, switches);
+    }
+
     private static Func<int, short> KeyStateFrom(HashSet<int> heldKeys) =>
         vkCode => heldKeys.Contains(vkCode) ? unchecked((short)0x8000) : (short)0;
 

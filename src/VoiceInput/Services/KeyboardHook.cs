@@ -29,6 +29,8 @@ public sealed class KeyboardHook : IDisposable
     public event Action? Cancelled;
     /// <summary>Enter pressed — used as a "done editing" signal to capture corrections.</summary>
     public event Action? Submitted;
+    /// <summary>Alt+Shift+G pressed — requests switching to the other input profile.</summary>
+    public event Action? ProfileSwitchRequested;
 
     private readonly LowLevelKeyboardProc _proc;   // kept alive in a field so the GC can't collect it
     private readonly Func<int, short> _getAsyncKeyState;
@@ -39,6 +41,9 @@ public sealed class KeyboardHook : IDisposable
     private int _pttVk;
     private bool _pttDown;
     private bool _chorded;
+    private bool _profileSwitchDown;
+
+    private const int VkG = 0x47;
 
     public KeyboardHook(string pttKey)
         : this(pttKey, GetAsyncKeyState)
@@ -54,7 +59,15 @@ public sealed class KeyboardHook : IDisposable
 
     internal bool IsPttGestureChorded => _pttDown && _chorded;
 
-    public void SetPttKey(string pttKey) => _pttVk = ResolveVk(pttKey);
+    public void SetPttKey(string pttKey)
+    {
+        int next = ResolveVk(pttKey);
+        if (next == _pttVk)
+            return;
+        _pttVk = next;
+        _pttDown = false;
+        _chorded = false;
+    }
 
     public void Install()
     {
@@ -98,6 +111,26 @@ public sealed class KeyboardHook : IDisposable
         if (isDown && vkCode == VK_RETURN)
             Submitted?.Invoke();
 
+        if (vkCode == VkG && isUp)
+        {
+            _profileSwitchDown = false;
+            return;
+        }
+
+        if (vkCode == VkG && isDown && IsHeld(VK_MENU) && IsHeld(VK_SHIFT))
+        {
+            if (_profileSwitchDown)
+                return;
+            _profileSwitchDown = true;
+            if (_pttDown && !_chorded)
+            {
+                _chorded = true;
+                Cancelled?.Invoke();
+            }
+            ProfileSwitchRequested?.Invoke();
+            return;
+        }
+
         if (isDown)
         {
             if (isPtt)
@@ -127,6 +160,8 @@ public sealed class KeyboardHook : IDisposable
 
     }
 
+    private bool IsHeld(int vkCode) => (_getAsyncKeyState(vkCode) & 0x8000) != 0;
+
     private bool HasOtherHeldKey()
     {
         int genericPttVk = GenericModifierFor(_pttVk);
@@ -152,9 +187,9 @@ public sealed class KeyboardHook : IDisposable
 
     private void Watchdog(object? sender, EventArgs e)
     {
+        ReconcileKeyState();
         if (_pttDown)
         {
-            ReconcileKeyState();
             _idleTicks = 0;
         }
         else if (++_idleTicks >= 50)   // ~5s idle: re-assert the hook in case Windows silently dropped it
@@ -166,6 +201,8 @@ public sealed class KeyboardHook : IDisposable
 
     internal void ReconcileKeyState()
     {
+        if (_profileSwitchDown && !IsHeld(VkG))
+            _profileSwitchDown = false;
         if (!_pttDown || (_getAsyncKeyState(_pttVk) & 0x8000) != 0)
             return;
 

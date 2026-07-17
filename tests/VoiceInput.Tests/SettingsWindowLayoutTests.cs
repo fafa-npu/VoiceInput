@@ -83,7 +83,7 @@ public sealed class SettingsWindowLayoutTests
                 var count = Assert.IsType<TextBlock>(window.FindName("VocabularyCountText"));
                 var currentEngine = Assert.IsType<TextBlock>(window.FindName("VocabularyCurrentEngineText"));
                 var mode = Assert.IsType<TextBlock>(window.FindName("VocabularyModeText"));
-                var pttMode = Assert.IsType<ComboBox>(window.FindName("PttModeCombo"));
+                var pttMode = Assert.IsType<ComboBox>(window.FindName("Profile1ModeCombo"));
                 var save = Assert.IsType<Button>(window.FindName("SaveButton"));
 
                 Assert.Equal(Visibility.Visible, page.Visibility);
@@ -555,7 +555,7 @@ public sealed class SettingsWindowLayoutTests
         var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
         string? captureDirectory = Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR");
 
-        foreach (string page in new[] { "Overview", "ModelSelection", "Vocabulary", "Refinement", "App" })
+        foreach (string page in new[] { "Overview", "ModelSelection", "Profiles", "Vocabulary", "Refinement", "App" })
         {
             var navigation = Assert.IsType<RadioButton>(window.FindName(page + "Nav"));
             navigation.IsChecked = true;
@@ -655,26 +655,55 @@ public sealed class SettingsWindowLayoutTests
         Layout(window, content, 720, 520);
         Capture(content, captureDirectory, "vocabulary-720x520.png");
 
-        Assert.IsType<RadioButton>(window.FindName("AppNav")).IsChecked = true;
+        Assert.IsType<RadioButton>(window.FindName("ProfilesNav")).IsChecked = true;
         Layout(window, content, 720, 520);
-        var appPage = Assert.IsType<ScrollViewer>(window.FindName("AppPage"));
-        var pttMode = Assert.IsType<ComboBox>(window.FindName("PttModeCombo"));
-        Rect pttModeBounds = pttMode.TransformToAncestor(appPage).TransformBounds(new Rect(pttMode.RenderSize));
+        var profilesPage = Assert.IsType<ScrollViewer>(window.FindName("ProfilesPage"));
+        var pttMode = Assert.IsType<ComboBox>(window.FindName("Profile1ModeCombo"));
+        Assert.Equal(0, profilesPage.ScrollableHeight);
+        Rect pttModeBounds = pttMode.TransformToAncestor(profilesPage).TransformBounds(new Rect(pttMode.RenderSize));
         Assert.True(
-            pttModeBounds.Top >= 0 && pttModeBounds.Bottom <= appPage.ViewportHeight,
-            $"Activation mode selector is outside the App viewport: {pttModeBounds}, viewport height {appPage.ViewportHeight}.");
-        Capture(content, captureDirectory, "app-720x520.png");
+            pttModeBounds.Top >= 0 && pttModeBounds.Bottom <= profilesPage.ViewportHeight,
+            $"Profile controls are outside the initial viewport: {pttModeBounds}, viewport height {profilesPage.ViewportHeight}.");
+        Capture(content, captureDirectory, "profiles-720x520.png");
 
         Assert.Equal(0, pttMode.SelectedIndex);
         pttMode.SelectedIndex = 1;
         Assert.Equal(
-            "Right Ctrl · press to start/stop",
+            "Desktop · Right Ctrl · press to start/stop",
             Assert.IsType<TextBlock>(window.FindName("OverviewPttText")).Text);
 
         var save = Assert.IsType<Button>(window.FindName("SaveButton"));
         Assert.True(save.IsEnabled);
+        var profile1Name = Assert.IsType<TextBox>(window.FindName("Profile1NameBox"));
+        var profile2Name = Assert.IsType<TextBox>(window.FindName("Profile2NameBox"));
+        var profile2Active = Assert.IsType<RadioButton>(window.FindName("Profile2ActiveRadio"));
+        var profile2Overlay = Assert.IsType<ComboBox>(window.FindName("Profile2OverlayCombo"));
+        Assert.Equal(InputProfile.MaxNameLength, profile1Name.MaxLength);
+        Assert.Equal("Desktop", profile1Name.Text);
+        Assert.Equal("Mobile", profile2Name.Text);
+        Assert.Equal(0, profile2Overlay.SelectedIndex);
+
+        profile2Name.Text = "Desktop";
         save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Assert.Equal(PttMode.Toggle, Assert.IsType<AppSettings>(savedSettings).PttMode);
+        Assert.True(window.IsVisible);
+        Assert.Contains(
+            "unique",
+            Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(Assert.IsType<RadioButton>(window.FindName("ProfilesNav")).IsChecked);
+
+        profile2Name.Text = "Phone";
+        profile2Active.IsChecked = true;
+        Assert.Equal(
+            "Phone · Left Ctrl · press to start/stop",
+            Assert.IsType<TextBlock>(window.FindName("OverviewPttText")).Text);
+        save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        AppSettings saved = Assert.IsType<AppSettings>(savedSettings);
+        Assert.Equal(InputProfile.Profile2Id, saved.ActiveProfileId);
+        Assert.Equal("Phone", saved.ActiveProfile.Name);
+        Assert.Equal("LeftCtrl", saved.PttKey);
+        Assert.Equal(PttMode.Toggle, saved.PttMode);
+        Assert.Equal(OverlayPosition.Top, saved.ActiveProfile.OverlayPosition);
     }
 
     private static void EnsureWindowsDirectoryEnvironment()

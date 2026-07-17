@@ -17,6 +17,17 @@ public sealed class PttGestureRoutingTests
                 submitted: PttMode.Hold));
     }
 
+    [Fact]
+    public void SettingsSavePreservesAConcurrentProfileSwitch()
+    {
+        Assert.Equal(
+            InputProfile.Profile2Id,
+            AppController.ResolveActiveProfileAfterSettingsSave(
+                current: InputProfile.Profile2Id,
+                settingsOpenedWith: InputProfile.Profile1Id,
+                submitted: InputProfile.Profile1Id));
+    }
+
     [Theory]
     [InlineData(FirstRunCompletionChoice.DefaultLocal, SpeechEngineKind.GptTranscribe, "paraformer-zh-q8", SpeechEngineKind.FunAsr, FunAsrModelCatalog.DefaultId)]
     [InlineData(FirstRunCompletionChoice.Configured, SpeechEngineKind.GptTranscribe, "paraformer-zh-q8", SpeechEngineKind.GptTranscribe, "paraformer-zh-q8")]
@@ -71,6 +82,33 @@ public sealed class PttGestureRoutingTests
                 mode,
                 (PttGesture)Convert.ToInt32(gesture),
                 dictating,
-                (DictationSessionState)Convert.ToInt32(state)));
+            (DictationSessionState)Convert.ToInt32(state)));
     }
+
+    [Theory]
+    [InlineData(false, DictationSessionState.Idle, true)]
+    [InlineData(false, DictationSessionState.Cancelled, true)]
+    [InlineData(false, DictationSessionState.Failed, true)]
+    [InlineData(true, DictationSessionState.Listening, false)]
+    [InlineData(false, DictationSessionState.Starting, false)]
+    [InlineData(false, DictationSessionState.Listening, false)]
+    [InlineData(false, DictationSessionState.Transcribing, false)]
+    [InlineData(false, DictationSessionState.Refining, false)]
+    [InlineData(false, DictationSessionState.Injecting, false)]
+    public void ProfileSwitchOnlyRunsOutsideRecordingAndProcessing(
+        bool dictating,
+        object state,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            AppController.CanSwitchProfile(dictating, (DictationSessionState)Convert.ToInt32(state)));
+    }
+
+    [Theory]
+    [InlineData(InputProfile.Profile1Id, InputProfile.Profile2Id)]
+    [InlineData(InputProfile.Profile2Id, InputProfile.Profile1Id)]
+    [InlineData("unknown", InputProfile.Profile2Id)]
+    public void ProfileSwitchCyclesBetweenFixedProfiles(string current, string expected) =>
+        Assert.Equal(expected, AppController.NextProfileId(current));
 }

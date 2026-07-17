@@ -78,8 +78,20 @@ public partial class SettingsWindow : Window
         LlmModelBox.Text = _draft.LlmModel;
         LlmPromptBox.Text = _draft.LlmPrompt;
         LanguageCombo.SelectedValue = _draft.Language;
-        PttModeCombo.SelectedIndex = _draft.PttMode == PttMode.Toggle ? 1 : 0;
-        PttCombo.SelectedValue = _draft.PttKey;
+        LoadProfileControls(
+            _draft.GetProfile(InputProfile.Profile1Id),
+            Profile1NameBox,
+            Profile1KeyCombo,
+            Profile1ModeCombo,
+            Profile1OverlayCombo);
+        LoadProfileControls(
+            _draft.GetProfile(InputProfile.Profile2Id),
+            Profile2NameBox,
+            Profile2KeyCombo,
+            Profile2ModeCombo,
+            Profile2OverlayCombo);
+        Profile1ActiveRadio.IsChecked = _draft.ActiveProfileId == InputProfile.Profile1Id;
+        Profile2ActiveRadio.IsChecked = _draft.ActiveProfileId == InputProfile.Profile2Id;
         UseContextBox.IsChecked = _draft.UseContext;
         LearnFromEditsBox.IsChecked = _draft.LearnFromEdits;
         DiagnosticLoggingBox.IsChecked = _draft.DiagnosticLogging;
@@ -109,6 +121,8 @@ public partial class SettingsWindow : Window
             LlmBaseUrlBox,
             LlmModelBox,
             LlmPromptBox,
+            Profile1NameBox,
+            Profile2NameBox,
         })
         {
             box.TextChanged += OnDraftValueChanged;
@@ -118,8 +132,20 @@ public partial class SettingsWindow : Window
             box.PasswordChanged += OnDraftValueChanged;
 
         LanguageCombo.SelectionChanged += OnDraftValueChanged;
-        PttModeCombo.SelectionChanged += OnDraftValueChanged;
-        PttCombo.SelectionChanged += OnDraftValueChanged;
+        foreach (ComboBox combo in new[]
+        {
+            Profile1KeyCombo,
+            Profile1ModeCombo,
+            Profile1OverlayCombo,
+            Profile2KeyCombo,
+            Profile2ModeCombo,
+            Profile2OverlayCombo,
+        })
+        {
+            combo.SelectionChanged += OnDraftValueChanged;
+        }
+        Profile1ActiveRadio.Checked += OnDraftValueChanged;
+        Profile2ActiveRadio.Checked += OnDraftValueChanged;
         TranscribeModelKindCombo.SelectionChanged += OnDraftValueChanged;
         LlmEnabledBox.Click += OnDraftValueChanged;
         UseContextBox.Click += OnSensitiveSettingChanged;
@@ -129,7 +155,7 @@ public partial class SettingsWindow : Window
 
     private void OnNavigationChanged(object sender, RoutedEventArgs e)
     {
-        if (OverviewPage is null || ModelSelectionPage is null || VocabularyPage is null
+        if (OverviewPage is null || ModelSelectionPage is null || ProfilesPage is null || VocabularyPage is null
             || RefinementPage is null || AppPage is null)
         {
             return;
@@ -137,6 +163,7 @@ public partial class SettingsWindow : Window
 
         OverviewPage.Visibility = sender == OverviewNav ? Visibility.Visible : Visibility.Collapsed;
         ModelSelectionPage.Visibility = sender == ModelSelectionNav ? Visibility.Visible : Visibility.Collapsed;
+        ProfilesPage.Visibility = sender == ProfilesNav ? Visibility.Visible : Visibility.Collapsed;
         VocabularyPage.Visibility = sender == VocabularyNav ? Visibility.Visible : Visibility.Collapsed;
         RefinementPage.Visibility = sender == RefinementNav ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = sender == AppNav ? Visibility.Visible : Visibility.Collapsed;
@@ -340,8 +367,21 @@ public partial class SettingsWindow : Window
         _draft.LlmModel = LlmModelBox.Text.Trim();
         _draft.LlmPrompt = LlmPromptBox.Text.Trim();
         _draft.Language = LanguageCombo.SelectedValue as string ?? _draft.Language;
-        _draft.PttMode = PttModeCombo.SelectedIndex == 1 ? PttMode.Toggle : PttMode.Hold;
-        _draft.PttKey = PttCombo.SelectedValue as string ?? _draft.PttKey;
+        CollectProfileControls(
+            _draft.GetProfile(InputProfile.Profile1Id),
+            Profile1NameBox,
+            Profile1KeyCombo,
+            Profile1ModeCombo,
+            Profile1OverlayCombo);
+        CollectProfileControls(
+            _draft.GetProfile(InputProfile.Profile2Id),
+            Profile2NameBox,
+            Profile2KeyCombo,
+            Profile2ModeCombo,
+            Profile2OverlayCombo);
+        _draft.ActiveProfileId = Profile2ActiveRadio.IsChecked == true
+            ? InputProfile.Profile2Id
+            : InputProfile.Profile1Id;
         _draft.UseContext = UseContextBox.IsChecked == true;
         _draft.LearnFromEdits = LearnFromEditsBox.IsChecked == true;
         _draft.DiagnosticLogging = DiagnosticLoggingBox.IsChecked == true;
@@ -409,8 +449,9 @@ public partial class SettingsWindow : Window
         OverviewLocalStatusText.Text = installedCount == 0
             ? "Not installed"
             : $"{installedCount} of {FunAsrModelCatalog.Models.Count} installed";
-        string pttBehavior = _draft.PttMode == PttMode.Toggle ? "press to start/stop" : "hold to talk";
-        OverviewPttText.Text = $"{PttDisplay(_draft.PttKey)} · {pttBehavior}";
+        InputProfile activeProfile = _draft.ActiveProfile;
+        string pttBehavior = activeProfile.PttMode == PttMode.Toggle ? "press to start/stop" : "hold to talk";
+        OverviewPttText.Text = $"{activeProfile.Name} · {PttDisplay(activeProfile.PttKey)} · {pttBehavior}";
         OverviewLanguageText.Text = LanguageDisplay(_draft.Language);
 
         if (_draft.Engine == SpeechEngineKind.FunAsr && !localReady)
@@ -1003,7 +1044,9 @@ public partial class SettingsWindow : Window
         if (validation is not null)
         {
             SetStatus(validation, ErrorBrush);
-            if (_draft.Engine == SpeechEngineKind.FunAsr)
+            if (ValidateProfiles() is not null)
+                ProfilesNav.IsChecked = true;
+            else if (_draft.Engine == SpeechEngineKind.FunAsr)
                 ModelSelectionNav.IsChecked = true;
             return;
         }
@@ -1016,6 +1059,9 @@ public partial class SettingsWindow : Window
 
     private string? ValidateDraft()
     {
+        string? profileValidation = ValidateProfiles();
+        if (profileValidation is not null)
+            return profileValidation;
         if (_draft.Engine == SpeechEngineKind.Azure)
         {
             if (_draft.AzureAuthMode == AzureAuthMode.Key
@@ -1053,6 +1099,19 @@ public partial class SettingsWindow : Window
         return null;
     }
 
+    private string? ValidateProfiles()
+    {
+        InputProfile first = _draft.GetProfile(InputProfile.Profile1Id);
+        InputProfile second = _draft.GetProfile(InputProfile.Profile2Id);
+        if (string.IsNullOrWhiteSpace(first.Name) || string.IsNullOrWhiteSpace(second.Name))
+            return "Each input profile needs a name.";
+        if (first.Name.Length > InputProfile.MaxNameLength || second.Name.Length > InputProfile.MaxNameLength)
+            return $"Profile names can contain at most {InputProfile.MaxNameLength} characters.";
+        if (string.Equals(first.Name, second.Name, StringComparison.OrdinalIgnoreCase))
+            return "Input profile names must be unique.";
+        return null;
+    }
+
     private void OnClosed(object? sender, EventArgs e)
     {
         _closed = true;
@@ -1083,6 +1142,34 @@ public partial class SettingsWindow : Window
         TranscribeModelKind.Gpt4oTranscribeDiarize => 2,
         _ => 3,
     };
+
+    private static void LoadProfileControls(
+        InputProfile profile,
+        TextBox name,
+        ComboBox key,
+        ComboBox mode,
+        ComboBox overlay)
+    {
+        name.Text = profile.Name;
+        key.SelectedValue = profile.PttKey;
+        mode.SelectedIndex = profile.PttMode == PttMode.Toggle ? 1 : 0;
+        overlay.SelectedIndex = profile.OverlayPosition == OverlayPosition.Bottom ? 1 : 0;
+    }
+
+    private static void CollectProfileControls(
+        InputProfile profile,
+        TextBox name,
+        ComboBox key,
+        ComboBox mode,
+        ComboBox overlay)
+    {
+        profile.Name = name.Text.Trim();
+        profile.PttKey = key.SelectedValue as string ?? profile.PttKey;
+        profile.PttMode = mode.SelectedIndex == 1 ? PttMode.Toggle : PttMode.Hold;
+        profile.OverlayPosition = overlay.SelectedIndex == 1
+            ? OverlayPosition.Bottom
+            : OverlayPosition.Top;
+    }
 
     private static string EngineDisplay(SpeechEngineKind engine) => engine switch
     {
@@ -1192,8 +1279,8 @@ public partial class SettingsWindow : Window
 
     private static bool SettingsEqual(AppSettings left, AppSettings right) =>
         left.Language == right.Language
-        && left.PttKey == right.PttKey
-        && left.PttMode == right.PttMode
+        && left.ActiveProfileId == right.ActiveProfileId
+        && ProfilesEqual(left.Profiles, right.Profiles)
         && left.Engine == right.Engine
         && left.FunAsrModelId == right.FunAsrModelId
         && left.AzureKey == right.AzureKey
@@ -1217,6 +1304,15 @@ public partial class SettingsWindow : Window
         && left.LearnFromEdits == right.LearnFromEdits
         && left.DiagnosticLogging == right.DiagnosticLogging
         && left.UseContext == right.UseContext;
+
+    private static bool ProfilesEqual(InputProfile[] left, InputProfile[] right) =>
+        left.Length == right.Length
+        && left.Zip(right).All(pair =>
+            pair.First.Id == pair.Second.Id
+            && pair.First.Name == pair.Second.Name
+            && pair.First.PttKey == pair.Second.PttKey
+            && pair.First.PttMode == pair.Second.PttMode
+            && pair.First.OverlayPosition == pair.Second.OverlayPosition);
 
     private sealed record ModelRow(
         TextBlock Selected,

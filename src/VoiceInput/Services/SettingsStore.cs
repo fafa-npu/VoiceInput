@@ -62,13 +62,17 @@ public sealed class SettingsStore
             TranscribeModelKind modelKind = ParseModelKind(dto.TranscribeModelKind);
             (RecognitionVocabularyNormalization vocabulary, bool invalidVocabularyShape) =
                 ParseVocabulary(dto.RecognitionVocabulary);
+            (InputProfile[] profiles, bool invalidProfilesShape) = ParseProfiles(
+                dto.Profiles,
+                dto.PttKey,
+                dto.PttMode);
 
             var settings = new AppSettings
             {
                 OnboardingCompleted = dto.OnboardingCompleted,
                 Language = dto.Language,
-                PttKey = dto.PttKey,
-                PttMode = dto.PttMode,
+                Profiles = profiles,
+                ActiveProfileId = dto.ActiveProfileId,
                 Engine = dto.Engine,
                 FunAsrModelId = FunAsrModelCatalog.NormalizeId(dto.FunAsrModelId),
                 AzureRegion = dto.AzureRegion,
@@ -97,6 +101,9 @@ public sealed class SettingsStore
             string level = modelKind == TranscribeModelKind.Unknown || invalidVocabularyShape ? "WARN " : string.Empty;
             Log.Write($"{level}Vocabulary settings-load modelKind={modelKind} configured={vocabulary.ConfiguredCount} " +
                 $"accepted={vocabulary.AcceptedCount} rejected={vocabulary.RejectedCount}");
+            Log.Write($"{(invalidProfilesShape ? "WARN " : string.Empty)}Profile settings-load " +
+                $"active={settings.ActiveProfileId} name={settings.ActiveProfile.Name} " +
+                $"key={settings.PttKey} mode={settings.PttMode} overlay={settings.ActiveProfile.OverlayPosition}");
             return settings;
         }
         catch (Exception ex)
@@ -115,12 +122,17 @@ public sealed class SettingsStore
         TranscribeModelKind modelKind = Enum.IsDefined(s.TranscribeModelKind)
             ? s.TranscribeModelKind
             : TranscribeModelKind.Unknown;
+        InputProfile[] profiles = InputProfile.Normalize(s.Profiles, s.PttKey, s.PttMode);
+        string activeProfileId = InputProfile.NormalizeId(s.ActiveProfileId);
+        InputProfile activeProfile = profiles.First(profile => profile.Id == activeProfileId);
         var dto = new PersistedSettings
         {
             OnboardingCompleted = s.OnboardingCompleted,
             Language = s.Language,
-            PttKey = s.PttKey,
-            PttMode = s.PttMode,
+            PttKey = activeProfile.PttKey,
+            PttMode = activeProfile.PttMode,
+            Profiles = JsonSerializer.SerializeToElement(profiles, JsonOptions),
+            ActiveProfileId = activeProfileId,
             Engine = s.Engine,
             FunAsrModelId = FunAsrModelCatalog.NormalizeId(s.FunAsrModelId),
             AzureRegion = s.AzureRegion,
@@ -170,6 +182,8 @@ public sealed class SettingsStore
         string level = modelKind == TranscribeModelKind.Unknown ? "WARN " : string.Empty;
         Log.Write($"{level}Vocabulary settings-save engine={s.Engine} modelKind={modelKind} mode={mode} " +
             $"configured={vocabulary.ConfiguredCount} accepted={vocabulary.AcceptedCount} rejected={vocabulary.RejectedCount}");
+        Log.Write($"Profile settings-save active={activeProfileId} name={activeProfile.Name} " +
+            $"key={activeProfile.PttKey} mode={activeProfile.PttMode} overlay={activeProfile.OverlayPosition}");
     }
 
     private static TranscribeModelKind ParseModelKind(JsonElement value)
@@ -211,6 +225,31 @@ public sealed class SettingsStore
             nonStringCount > 0);
     }
 
+    private static (InputProfile[] Profiles, bool InvalidShape) ParseProfiles(
+        JsonElement value,
+        string legacyKey,
+        PttMode legacyMode)
+    {
+        InputProfile[] fallback = InputProfile.CreateDefaults(legacyKey, legacyMode);
+        if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            return (fallback, false);
+        if (value.ValueKind != JsonValueKind.Array)
+            return (fallback, true);
+
+        try
+        {
+            InputProfile?[]? parsed = JsonSerializer.Deserialize<InputProfile?[]>(value.GetRawText(), JsonOptions);
+            bool hasBothProfiles = parsed is not null
+                && parsed.Any(profile => profile?.Id == InputProfile.Profile1Id)
+                && parsed.Any(profile => profile?.Id == InputProfile.Profile2Id);
+            return (InputProfile.Normalize(parsed, legacyKey, legacyMode), !hasBothProfiles);
+        }
+        catch (JsonException)
+        {
+            return (fallback, true);
+        }
+    }
+
     private static string Protect(string? plaintext)
     {
         if (string.IsNullOrEmpty(plaintext) || !OperatingSystem.IsWindows())
@@ -242,6 +281,8 @@ public sealed class SettingsStore
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
         public PttMode PttMode { get; set; } = PttMode.Hold;
+        public JsonElement Profiles { get; set; }
+        public string ActiveProfileId { get; set; } = InputProfile.Profile1Id;
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
         public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
         public string AzureRegion { get; set; } = "eastasia";

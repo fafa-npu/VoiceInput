@@ -59,6 +59,22 @@ public sealed class BrandingTests
         AssertNoLegacyDisplayText(Path.Combine(root, "src", "VoiceInput", "Views", "SettingsWindow.xaml"));
     }
 
+    [Fact]
+    public void ReadmeLeadsWithCopilotInstallAndWebInstallerVerifiesReleaseDigest()
+    {
+        string root = FindRepositoryRoot();
+        string readme = File.ReadAllText(Path.Combine(root, "README.md"));
+        string installer = File.ReadAllText(Path.Combine(root, "scripts", "install.ps1"));
+
+        Assert.StartsWith("> **Install:** Give Copilot", readme, StringComparison.Ordinal);
+        Assert.Contains("https://github.com/fafa-npu/VoiceInput", readme, StringComparison.Ordinal);
+        Assert.DoesNotContain("AllowUnsignedDevelopmentBuild", readme, StringComparison.Ordinal);
+        Assert.Contains("/repos/fafa-npu/VoiceInput/releases/latest", installer, StringComparison.Ordinal);
+        Assert.Contains("$asset.digest", installer, StringComparison.Ordinal);
+        Assert.Contains("Get-FileHash", installer, StringComparison.Ordinal);
+        Assert.Contains("$officialReleaseDigestVerified", installer, StringComparison.Ordinal);
+    }
+
     private static void AssertColorPresent(Bitmap bitmap, Color expected)
     {
         bool present = false;

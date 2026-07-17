@@ -78,6 +78,7 @@ public sealed class AppController : IDisposable
         _hook.RecoveredRelease += () => HandlePttGesture(PttGesture.RecoveredRelease);
         _hook.Cancelled += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Cancelled));
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
+        _hook.ProfileSwitchRequested += () => _ui.BeginInvoke(HandleProfileSwitchRequested);
 
         _audio.LevelChanged += lvl => { _level = lvl; if (lvl > _sessionPeak) _sessionPeak = lvl; };
     }
@@ -116,6 +117,23 @@ public sealed class AppController : IDisposable
         PttMode submitted) =>
         submitted == settingsOpenedWith ? current : submitted;
 
+    internal static string ResolveActiveProfileAfterSettingsSave(
+        string current,
+        string settingsOpenedWith,
+        string submitted) =>
+        submitted == settingsOpenedWith ? current : submitted;
+
+    internal static bool CanSwitchProfile(bool dictating, DictationSessionState state) =>
+        !dictating && state is not (
+            DictationSessionState.Starting
+            or DictationSessionState.Listening
+            or DictationSessionState.Transcribing
+            or DictationSessionState.Refining
+            or DictationSessionState.Injecting);
+
+    internal static string NextProfileId(string current) =>
+        current == InputProfile.Profile2Id ? InputProfile.Profile1Id : InputProfile.Profile2Id;
+
     internal static (SpeechEngineKind Engine, string ModelId) ResolveOnboardingRecognition(
         FirstRunCompletionChoice choice,
         SpeechEngineKind currentEngine,
@@ -149,12 +167,16 @@ public sealed class AppController : IDisposable
 
     public void Start()
     {
-        _overlay = new OverlayWindow { LevelSource = () => _level };
+        _overlay = new OverlayWindow
+        {
+            LevelSource = () => _level,
+            Position = _settings.ActiveProfile.OverlayPosition,
+        };
         RefreshInstalledUninstaller();
         MigrateLegacyShortcuts();
         BuildTray();
         _hook.Install();
-        Log.Write($"=== gujiguji v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, pttMode={_settings.PttMode}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
+        Log.Write($"=== gujiguji v{UpdateService.CurrentVersion} started. profile={_settings.ActiveProfile.Name}, ptt={_settings.PttKey}, pttMode={_settings.PttMode}, overlay={_settings.ActiveProfile.OverlayPosition}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
         if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
@@ -614,13 +636,58 @@ public sealed class AppController : IDisposable
         RebuildMenu();
     }
 
-    private string TrayTooltip() => _paused
-        ? "gujiguji — paused"
-        : _session.State is not DictationSessionState.Idle
-            ? $"gujiguji — {_session.State.ToString().ToLowerInvariant()}"
-            : _settings.PttMode == PttMode.Toggle
-                ? $"gujiguji — press {PttDisplay(_settings.PttKey)} to start/stop"
-                : $"gujiguji — hold {PttDisplay(_settings.PttKey)} to talk";
+    private string TrayTooltip()
+    {
+        string profile = _settings.ActiveProfile.Name;
+        string state = _paused
+            ? "paused"
+            : _session.State is not DictationSessionState.Idle
+                ? _session.State.ToString().ToLowerInvariant()
+                : _settings.PttMode == PttMode.Toggle
+                    ? $"{PttDisplay(_settings.PttKey)} start/stop"
+                    : $"hold {PttDisplay(_settings.PttKey)}";
+        string tooltip = $"gujiguji · {profile} · {state}";
+        return tooltip.Length <= 63 ? tooltip : tooltip[..63];
+    }
+
+    private void HandleProfileSwitchRequested() =>
+        ActivateProfile(NextProfileId(_settings.ActiveProfileId), showOverlay: true);
+
+    private void ActivateProfile(string profileId, bool showOverlay)
+    {
+        string normalized = InputProfile.NormalizeId(profileId);
+        if (normalized == _settings.ActiveProfileId)
+            return;
+        if (!CanSwitchProfile(_dictating, _session.State))
+        {
+            Notify("Profile not switched", "Finish the current dictation before switching input profiles.");
+            return;
+        }
+
+        _settings.ActiveProfileId = normalized;
+        Persist();
+        ApplyActiveProfile(showOverlay);
+        Log.Write($"Input profile switched to id={normalized} name={_settings.ActiveProfile.Name} " +
+            $"key={_settings.PttKey} mode={_settings.PttMode} overlay={_settings.ActiveProfile.OverlayPosition}.");
+    }
+
+    private void ApplyActiveProfile(bool showOverlay)
+    {
+        InputProfile profile = _settings.ActiveProfile;
+        _hook.SetPttKey(profile.PttKey);
+        if (_overlay is not null)
+        {
+            _overlay.Position = profile.OverlayPosition;
+            if (showOverlay)
+            {
+                string behavior = profile.PttMode == PttMode.Toggle ? "press to start / stop" : "hold to talk";
+                _overlay.ShowProfileChanged(profile.Name, $"{PttDisplay(profile.PttKey)} · {behavior}");
+            }
+        }
+        if (_tray is not null)
+            _tray.Text = TrayTooltip();
+        RebuildMenu();
+    }
 
     private void TogglePause()
     {
@@ -763,6 +830,18 @@ public sealed class AppController : IDisposable
         var pause = new WinForms.ToolStripMenuItem(_paused ? "Resume listening" : "Pause listening");
         pause.Click += (_, _) => TogglePause();
         menu.Items.Add(pause);
+
+        var profileMenu = new WinForms.ToolStripMenuItem("Input profile");
+        foreach (InputProfile profile in _settings.Profiles)
+        {
+            var item = new WinForms.ToolStripMenuItem(profile.Name)
+            {
+                Checked = profile.Id == _settings.ActiveProfileId,
+            };
+            item.Click += (_, _) => ActivateProfile(profile.Id, showOverlay: true);
+            profileMenu.DropDownItems.Add(item);
+        }
+        menu.Items.Add(profileMenu);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
         var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
@@ -790,7 +869,10 @@ public sealed class AppController : IDisposable
         quit.Click += (_, _) => Application.Current.Shutdown();
         menu.Items.Add(quit);
 
-        _tray!.ContextMenuStrip = menu;
+        WinForms.ContextMenuStrip? previous = _tray!.ContextMenuStrip;
+        _tray.ContextMenuStrip = menu;
+        if (previous is not null)
+            _ui.BeginInvoke(DispatcherPriority.Background, new Action(previous.Dispose));
     }
 
     private void OpenFirstRun()
@@ -887,18 +969,25 @@ public sealed class AppController : IDisposable
         FirstRunWindow? firstRun = _firstRunWindow;
         if (firstRun is { IsVisible: true })
             firstRun.IsEnabled = false;
-        PttMode settingsOpenedWith = _settings.PttMode;
+        AppSettings settingsOpenedWith = _settings.Clone();
         var win = new SettingsWindow(_settings, updated =>
         {
-            updated.PttMode = ResolvePttModeAfterSettingsSave(
-                _settings.PttMode,
-                settingsOpenedWith,
-                updated.PttMode);
+            foreach (string profileId in new[] { InputProfile.Profile1Id, InputProfile.Profile2Id })
+            {
+                InputProfile submittedProfile = updated.GetProfile(profileId);
+                submittedProfile.PttMode = ResolvePttModeAfterSettingsSave(
+                    _settings.GetProfile(profileId).PttMode,
+                    settingsOpenedWith.GetProfile(profileId).PttMode,
+                    submittedProfile.PttMode);
+            }
+            updated.ActiveProfileId = ResolveActiveProfileAfterSettingsSave(
+                _settings.ActiveProfileId,
+                settingsOpenedWith.ActiveProfileId,
+                updated.ActiveProfileId);
+            bool profileChanged = updated.ActiveProfileId != _settings.ActiveProfileId;
             _settings = updated;
             _store.Save(_settings);
-            _hook.SetPttKey(_settings.PttKey);
-            if (_tray is not null) _tray.Text = TrayTooltip();
-            RebuildMenu();
+            ApplyActiveProfile(profileChanged);
         }, _funAsr, new SettingsWindowActions(
             IsAutoStartEnabled,
             SetAutoStart,

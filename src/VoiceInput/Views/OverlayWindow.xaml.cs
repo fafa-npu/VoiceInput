@@ -4,12 +4,14 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
+using VoiceInput.Models;
 using static VoiceInput.Interop.NativeMethods;
 
 namespace VoiceInput.Views;
 
 /// <summary>
-/// Borderless, non-activating, bottom-center capsule overlay. Shows the live waveform and the
+/// Borderless, non-activating capsule overlay. Shows the live waveform and the
 /// running transcript while dictating. The host window is a fixed-size transparent layer; the
 /// capsule is centered and its Width is animated (0.25s) so it grows/shrinks smoothly from the
 /// center as the transcript changes — never the instant jump that SizeToContent produces.
@@ -17,7 +19,7 @@ namespace VoiceInput.Views;
 /// </summary>
 public partial class OverlayWindow : Window
 {
-    private const double BottomMargin = 64;
+    private const double EdgeMargin = 64;
 
     // Width-geometry constants (must match the XAML module and information-pod chrome).
     private const double WaveModuleWidth = 64;
@@ -32,6 +34,7 @@ public partial class OverlayWindow : Window
 
     private readonly ScaleTransform _scale = new(1, 1);
     private readonly TranslateTransform _translate = new(0, 0);
+    private readonly DispatcherTimer _profileNoticeTimer;
 
     // The window we anchor the overlay to (the app being dictated into); captured at show time
     // so the capsule appears on whichever monitor the user is actually working on.
@@ -45,7 +48,11 @@ public partial class OverlayWindow : Window
         group.Children.Add(_translate);
         Capsule.RenderTransform = group;
         Capsule.RenderTransformOrigin = new Point(0.5, 1.0);
+        _profileNoticeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
+        _profileNoticeTimer.Tick += (_, _) => HideAnimated();
     }
+
+    public OverlayPosition Position { get; set; } = OverlayPosition.Bottom;
 
     /// <summary>Pulled by the waveform each frame to read the latest level.</summary>
     public Func<double>? LevelSource
@@ -64,6 +71,7 @@ public partial class OverlayWindow : Window
 
     public void ShowListening(string placeholder)
     {
+        _profileNoticeTimer.Stop();
         // Capture the active window now (before we Show, which never steals focus) so the overlay
         // lands on the monitor the user is working on.
         _anchorWindow = GetForegroundWindow();
@@ -78,6 +86,25 @@ public partial class OverlayWindow : Window
         Show();
         Reposition();
         PlayEntrance();
+    }
+
+    public void ShowProfileChanged(string profileName, string activationSummary)
+    {
+        _anchorWindow = GetForegroundWindow();
+        _profileNoticeTimer.Stop();
+        PhaseLabel.Text = "INPUT PROFILE";
+        LiveIndicator.Visibility = Visibility.Collapsed;
+        Label.Text = $"{profileName} · {activationSummary}";
+        Label.Opacity = 1.0;
+        SetWidth(ComputeTargetWidth(Label.Text), animate: false);
+        Wave.Stop();
+        BeginAnimation(OpacityProperty, null);
+        Opacity = 0;
+        if (!IsVisible)
+            Show();
+        Reposition();
+        PlayEntrance();
+        _profileNoticeTimer.Start();
     }
 
     public void SetText(string text)
@@ -124,6 +151,7 @@ public partial class OverlayWindow : Window
 
     public void HideAnimated()
     {
+        _profileNoticeTimer.Stop();
         Wave.Stop();
         var fade = new DoubleAnimation(Opacity, 0, TimeSpan.FromSeconds(ExitSeconds))
         {
@@ -195,7 +223,7 @@ public partial class OverlayWindow : Window
     }
 
     /// <summary>
-    /// Position the capsule bottom-center on the active monitor (the one holding the foreground
+    /// Position the capsule top- or bottom-center on the active monitor (the one holding the foreground
     /// window, falling back to the cursor's monitor). Uses physical pixels via SetWindowPos so it
     /// works across monitors with different DPI scaling — SystemParameters.WorkArea only covers
     /// the primary screen.
@@ -221,8 +249,21 @@ public partial class OverlayWindow : Window
         int physH = (int)Math.Round(Height * scale);
         var work = mi.rcWork;   // physical pixels
         int x = work.left + ((work.right - work.left) - physW) / 2;
-        int y = work.bottom - physH - (int)Math.Round(BottomMargin * scale);
+        int y = CalculateVerticalPosition(Position, work.top, work.bottom, physH, scale);
 
         SetWindowPos(hwnd, IntPtr.Zero, x, y, physW, physH, SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+
+    internal static int CalculateVerticalPosition(
+        OverlayPosition position,
+        int workTop,
+        int workBottom,
+        int physicalHeight,
+        double scale)
+    {
+        int margin = (int)Math.Round(EdgeMargin * scale);
+        return position == OverlayPosition.Top
+            ? workTop + margin
+            : workBottom - physicalHeight - margin;
     }
 }

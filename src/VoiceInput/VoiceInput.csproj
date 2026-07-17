@@ -22,7 +22,7 @@
     <Description>Voice-to-agent dictation for Windows</Description>
     <LangVersion>latest</LangVersion>
     <!-- Bump per release; `make release VERSION=vX.Y.Z` bakes the matching version into the build. -->
-    <Version>0.2.13</Version>
+    <Version>0.2.14</Version>
     <!-- WPF cannot be trimmed; never enable PublishTrimmed. -->
     <PublishTrimmed>false</PublishTrimmed>
     <!-- WPF owns DPI awareness via app.manifest (PerMonitorV2); silence the WinForms-only DPI analyzer. -->

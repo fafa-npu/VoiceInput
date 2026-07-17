@@ -21,6 +21,13 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(FunAsrModelCatalog.DefaultId, settings.FunAsrModelId);
         Assert.Equal(TranscribeModelKind.Gpt4oTranscribe, settings.TranscribeModelKind);
         Assert.Empty(settings.RecognitionVocabulary);
+        Assert.Equal(InputProfile.Profile1Id, settings.ActiveProfileId);
+        Assert.Equal("Desktop", settings.ActiveProfile.Name);
+        Assert.Equal(OverlayPosition.Bottom, settings.ActiveProfile.OverlayPosition);
+        Assert.Equal("Mobile", settings.GetProfile(InputProfile.Profile2Id).Name);
+        Assert.Equal("LeftCtrl", settings.GetProfile(InputProfile.Profile2Id).PttKey);
+        Assert.Equal(PttMode.Toggle, settings.GetProfile(InputProfile.Profile2Id).PttMode);
+        Assert.Equal(OverlayPosition.Top, settings.GetProfile(InputProfile.Profile2Id).OverlayPosition);
     }
 
     [Fact]
@@ -34,6 +41,12 @@ public sealed class SettingsStoreTests : IDisposable
             Language = "en-US",
             PttKey = "CapsLock",
             PttMode = PttMode.Toggle,
+            Profiles =
+            [
+                new InputProfile(InputProfile.Profile1Id, "Workstation", "CapsLock", PttMode.Toggle, OverlayPosition.Bottom),
+                new InputProfile(InputProfile.Profile2Id, "Phone", "LeftCtrl", PttMode.Toggle, OverlayPosition.Top),
+            ],
+            ActiveProfileId = InputProfile.Profile2Id,
             Engine = SpeechEngineKind.FunAsr,
             FunAsrModelId = "paraformer-zh-q8",
             TranscribeModelKind = TranscribeModelKind.Gpt4oMiniTranscribe,
@@ -54,8 +67,13 @@ public sealed class SettingsStoreTests : IDisposable
             savedJson.RootElement.GetProperty("RecognitionVocabulary").EnumerateArray().Select(item => item.GetString()));
         Assert.True(loaded.OnboardingCompleted);
         Assert.Equal("en-US", loaded.Language);
-        Assert.Equal("CapsLock", loaded.PttKey);
+        Assert.Equal("LeftCtrl", loaded.PttKey);
+        Assert.Equal("CapsLock", loaded.GetProfile(InputProfile.Profile1Id).PttKey);
         Assert.Equal(PttMode.Toggle, loaded.PttMode);
+        Assert.Equal(InputProfile.Profile2Id, loaded.ActiveProfileId);
+        Assert.Equal("Workstation", loaded.GetProfile(InputProfile.Profile1Id).Name);
+        Assert.Equal("Phone", loaded.ActiveProfile.Name);
+        Assert.Equal(OverlayPosition.Top, loaded.ActiveProfile.OverlayPosition);
         Assert.Equal(SpeechEngineKind.FunAsr, loaded.Engine);
         Assert.Equal("paraformer-zh-q8", loaded.FunAsrModelId);
         Assert.Equal(TranscribeModelKind.Gpt4oMiniTranscribe, loaded.TranscribeModelKind);
@@ -98,6 +116,60 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.True(loaded.OnboardingCompleted);
         Assert.Equal(TranscribeModelKind.Unknown, loaded.TranscribeModelKind);
         Assert.Empty(loaded.RecognitionVocabulary);
+        Assert.Equal(InputProfile.Profile1Id, loaded.ActiveProfileId);
+        Assert.Equal("RightCtrl", loaded.ActiveProfile.PttKey);
+        Assert.Equal(PttMode.Hold, loaded.ActiveProfile.PttMode);
+    }
+
+    [Fact]
+    public void LegacyActivationSettingsMigrateIntoDesktopProfile()
+    {
+        string path = Path.Combine(_directory, "settings.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, """
+            {
+              "Language": "zh-CN",
+              "PttKey": "CapsLock",
+              "PttMode": "Toggle",
+              "Engine": "Windows"
+            }
+            """);
+
+        AppSettings loaded = new SettingsStore(path).Load();
+
+        Assert.Equal(InputProfile.Profile1Id, loaded.ActiveProfileId);
+        Assert.Equal("Desktop", loaded.ActiveProfile.Name);
+        Assert.Equal("CapsLock", loaded.ActiveProfile.PttKey);
+        Assert.Equal(PttMode.Toggle, loaded.ActiveProfile.PttMode);
+        InputProfile mobile = loaded.GetProfile(InputProfile.Profile2Id);
+        Assert.Equal("Mobile", mobile.Name);
+        Assert.Equal("LeftCtrl", mobile.PttKey);
+        Assert.Equal(PttMode.Toggle, mobile.PttMode);
+        Assert.Equal(OverlayPosition.Top, mobile.OverlayPosition);
+    }
+
+    [Fact]
+    public void InvalidProfilesFallBackWithoutDiscardingOtherSettings()
+    {
+        string path = Path.Combine(_directory, "settings.json");
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(path, """
+            {
+              "Language": "ja-JP",
+              "PttKey": "RightShift",
+              "PttMode": "Hold",
+              "Profiles": "invalid",
+              "ActiveProfileId": "unknown",
+              "Engine": "Windows"
+            }
+            """);
+
+        AppSettings loaded = new SettingsStore(path).Load();
+
+        Assert.Equal("ja-JP", loaded.Language);
+        Assert.Equal(InputProfile.Profile1Id, loaded.ActiveProfileId);
+        Assert.Equal("RightShift", loaded.ActiveProfile.PttKey);
+        Assert.Equal("Mobile", loaded.GetProfile(InputProfile.Profile2Id).Name);
     }
 
     [Fact]

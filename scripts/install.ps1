@@ -35,6 +35,7 @@ $StartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($DisplayNa
 $LegacyStartupLnk   = Join-Path ([Environment]::GetFolderPath('Startup')) ($AppName + '.lnk')
 $LegacyStartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($AppName + '.lnk')
 $UserDataDir = Join-Path $env:APPDATA $AppName
+$officialReleaseDigestVerified = $false
 
 function New-AppShortcut($path) {
     $shell = New-Object -ComObject WScript.Shell
@@ -101,20 +102,44 @@ if (-not $Source) {
         $Source = Join-Path $pubDir $ExeName
     }
     else {
-        # Not run from a clone (e.g. the one-line web installer): download the latest release exe.
+        # Not run from a clone (e.g. the one-line web installer): download and verify the latest release.
         Write-Host 'Downloading the latest gujiguji release (VoiceInput.exe)...' -ForegroundColor Cyan
+        $headers = @{
+            'Accept' = 'application/vnd.github+json'
+            'User-Agent' = 'gujiguji-installer'
+        }
+        $release = Invoke-RestMethod `
+            -Uri 'https://api.github.com/repos/fafa-npu/VoiceInput/releases/latest' `
+            -Headers $headers
+        $asset = @($release.assets) | Where-Object { $_.name -eq $ExeName } | Select-Object -First 1
+        if ($null -eq $asset) { throw "Latest GitHub release does not contain $ExeName." }
+        $digest = [string]$asset.digest
+        if ($digest -notmatch '^sha256:([0-9a-fA-F]{64})$') {
+            throw 'Latest GitHub release does not provide a valid SHA-256 asset digest.'
+        }
+        $expectedSha256 = $Matches[1]
         $Source = Join-Path $env:TEMP $ExeName
-        Invoke-WebRequest 'https://github.com/fafa-npu/VoiceInput/releases/latest/download/VoiceInput.exe' -OutFile $Source
+        Invoke-WebRequest ([string]$asset.browser_download_url) -OutFile $Source
+        $actualSha256 = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+        if (-not $actualSha256.Equals($expectedSha256, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+            throw 'Downloaded release failed GitHub SHA-256 digest verification.'
+        }
+        $officialReleaseDigestVerified = $true
+        Write-Host 'Verified the official GitHub release SHA-256 digest.' -ForegroundColor Green
     }
 }
 
 if (-not (Test-Path $Source)) { throw "Installer source not found: $Source" }
 
 $signature = Get-AuthenticodeSignature -LiteralPath $Source
-if ($signature.Status -ne 'Valid' -and -not $AllowUnsignedDevelopmentBuild) {
+if ($signature.Status -ne 'Valid' -and -not $AllowUnsignedDevelopmentBuild -and -not $officialReleaseDigestVerified) {
     throw "VoiceInput.exe does not have a valid Authenticode signature ($($signature.Status))."
 }
-if ($signature.Status -ne 'Valid') {
+if ($signature.Status -ne 'Valid' -and $officialReleaseDigestVerified) {
+    Write-Host 'The release is not Authenticode signed; its GitHub SHA-256 digest was verified.' -ForegroundColor Yellow
+}
+elseif ($signature.Status -ne 'Valid') {
     Write-Warning 'Installing an unsigned development build. Never use -AllowUnsignedDevelopmentBuild for a downloaded release.'
 }
 
@@ -133,6 +158,6 @@ Write-Host 'Auto-start enabled (runs at login); Start Menu entry created.' -Fore
 
 if (-not $NoLaunch) {
     Start-Process (Join-Path $InstallDir $ExeName)
-    Write-Host 'gujiguji is running. Configure the activation mode and key under Settings > App.' -ForegroundColor Green
+    Write-Host 'gujiguji is running. Configure input profiles under Settings > Profiles.' -ForegroundColor Green
 }
 Write-Host "Uninstall any time: powershell -File `"$InstallDir\uninstall.ps1`" -Uninstall"
