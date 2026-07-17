@@ -48,7 +48,9 @@ public sealed class SettingsWindowLayoutTests
             () => { },
             _ => Task.CompletedTask,
             _ => { },
-            () => null);
+            () => null,
+            _ => Task.FromResult(Array.Empty<string>()),
+            _ => false);
         string[] terms = Enumerable.Range(1, 250)
             .Select(index => $"Term {index}")
             .ToArray();
@@ -139,6 +141,10 @@ public sealed class SettingsWindowLayoutTests
             new HttpClient(new OfflineHandler()),
             () => long.MaxValue,
             (_, _) => Task.CompletedTask);
+        var suggestions = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool confirmSuggestions = true;
+        IReadOnlyList<string>? previewedSuggestions = null;
+        AppSettings? vocabularyRequestSettings = null;
         var actions = new SettingsWindowActions(
             () => false,
             _ => { },
@@ -151,7 +157,17 @@ public sealed class SettingsWindowLayoutTests
             () => { },
             _ => Task.CompletedTask,
             _ => { },
-            () => null);
+            () => null,
+            requestSettings =>
+            {
+                vocabularyRequestSettings = requestSettings;
+                return suggestions.Task;
+            },
+            candidates =>
+            {
+                previewedSuggestions = candidates;
+                return confirmSuggestions;
+            });
         AppSettings? savedSettings = null;
         var settings = new AppSettings
         {
@@ -169,7 +185,7 @@ public sealed class SettingsWindowLayoutTests
         try
         {
             window.Show();
-            var engine = Assert.IsType<ListBox>(window.FindName("EngineList"));
+            var engine = Assert.IsType<ComboBox>(window.FindName("EngineList"));
             var modelKind = Assert.IsType<ComboBox>(window.FindName("TranscribeModelKindCombo"));
             var deployment = Assert.IsType<TextBox>(window.FindName("TranscribeModelBox"));
             var vocabularyNav = Assert.IsType<RadioButton>(window.FindName("VocabularyNav"));
@@ -181,7 +197,18 @@ public sealed class SettingsWindowLayoutTests
             var separatorHint = Assert.IsType<TextBlock>(window.FindName("VocabularySeparatorHintText"));
             var supported = Assert.IsType<TextBlock>(window.FindName("VocabularySupportedModelsText"));
             var unsupported = Assert.IsType<TextBlock>(window.FindName("VocabularyUnsupportedModelsText"));
+            var suggestVocabulary = Assert.IsType<Button>(window.FindName("SuggestVocabularyButton"));
+            var useContext = Assert.IsType<CheckBox>(window.FindName("UseContextBox"));
+            var learnFromEdits = Assert.IsType<CheckBox>(window.FindName("LearnFromEditsBox"));
+            var useContextHelp = Assert.IsType<TextBlock>(window.FindName("UseContextHelpText"));
+            var learnFromEditsHelp = Assert.IsType<TextBlock>(window.FindName("LearnFromEditsHelpText"));
+            var diagnosticPrivacy = Assert.IsType<TextBlock>(window.FindName("DiagnosticPrivacyText"));
             var diagnosticLogging = Assert.IsType<CheckBox>(window.FindName("DiagnosticLoggingBox"));
+            var llmEnabled = Assert.IsType<CheckBox>(window.FindName("LlmEnabledBox"));
+            var llmModel = Assert.IsType<TextBox>(window.FindName("LlmModelBox"));
+            var overviewLocalModel = Assert.IsType<StackPanel>(window.FindName("OverviewLocalModelPanel"));
+            var overviewLocalReadiness = Assert.IsType<StackPanel>(window.FindName("OverviewLocalReadinessPanel"));
+            var overviewLlm = Assert.IsType<StackPanel>(window.FindName("OverviewLlmPanel"));
             var save = Assert.IsType<Button>(window.FindName("SaveButton"));
 
             Assert.Equal(
@@ -213,6 +240,49 @@ public sealed class SettingsWindowLayoutTests
                 "vocabulary",
                 Assert.IsType<string>(diagnosticLogging.Content),
                 StringComparison.OrdinalIgnoreCase);
+            Assert.False(useContext.IsEnabled);
+            Assert.False(learnFromEdits.IsEnabled);
+            Assert.False(suggestVocabulary.IsEnabled);
+            Assert.Contains("LLM", Assert.IsType<string>(useContextHelp.ToolTip), StringComparison.Ordinal);
+            Assert.Contains("LLM", Assert.IsType<string>(learnFromEditsHelp.ToolTip), StringComparison.Ordinal);
+            Assert.Contains("never uploaded", diagnosticPrivacy.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(Visibility.Collapsed, overviewLocalModel.Visibility);
+            Assert.Equal(Visibility.Collapsed, overviewLocalReadiness.Visibility);
+            Assert.Equal(0, Grid.GetColumn(overviewLlm));
+            Assert.Equal(3, Grid.GetColumnSpan(overviewLlm));
+
+            llmEnabled.IsChecked = true;
+            llmEnabled.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
+            Assert.True(useContext.IsEnabled);
+            Assert.True(learnFromEdits.IsEnabled);
+            Assert.True(suggestVocabulary.IsEnabled);
+
+            suggestVocabulary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.False(suggestVocabulary.IsEnabled);
+            vocabulary.Text = "Existing term, Added while waiting";
+            suggestions.SetResult(["Existing term", "New Product"]);
+            Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+            Assert.True(Assert.IsType<AppSettings>(vocabularyRequestSettings).LlmEnabled);
+            Assert.Equal(["Existing term", "New Product"], previewedSuggestions);
+            Assert.Equal("Existing term, Added while waiting, New Product", vocabulary.Text);
+            Assert.True(suggestVocabulary.IsEnabled);
+
+            confirmSuggestions = false;
+            suggestions = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            string beforeCancel = vocabulary.Text;
+            suggestVocabulary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            suggestions.SetResult(["Cancelled term"]);
+            Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+            Assert.Equal(beforeCancel, vocabulary.Text);
+
+            vocabulary.Text = "Existing term";
+            llmModel.Text = string.Empty;
+            Assert.False(useContext.IsEnabled);
+            Assert.False(learnFromEdits.IsEnabled);
+            Assert.False(suggestVocabulary.IsEnabled);
+            llmModel.Text = "gpt-4.1-mini";
+            llmEnabled.IsChecked = false;
+            llmEnabled.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
 
             Assert.Equal("Existing term", vocabulary.Text);
             Assert.Equal("1 term", count.Text);
@@ -297,7 +367,9 @@ public sealed class SettingsWindowLayoutTests
                 return pendingInstall.Task;
             },
             _ => pendingInstall.TrySetCanceled(),
-            () => activeModel);
+            () => activeModel,
+            _ => Task.FromResult(Array.Empty<string>()),
+            _ => false);
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -307,7 +379,7 @@ public sealed class SettingsWindowLayoutTests
         {
             window.Show();
             Assert.IsType<RadioButton>(window.FindName("ModelSelectionNav")).IsChecked = true;
-            Assert.IsType<ListBox>(window.FindName("EngineList")).SelectedIndex = 3;
+            Assert.IsType<ComboBox>(window.FindName("EngineList")).SelectedIndex = 3;
             var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
             Layout(window, content, 720, 520);
             Button download = Descendants<Button>(window)
@@ -367,6 +439,8 @@ public sealed class SettingsWindowLayoutTests
         {
             try
             {
+                SynchronizationContext.SetSynchronizationContext(
+                    new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
                 verify();
             }
             catch (Exception exception)
@@ -408,7 +482,9 @@ public sealed class SettingsWindowLayoutTests
             () => { },
             _ => Task.CompletedTask,
             _ => { },
-            () => null);
+            () => null,
+            _ => Task.FromResult(Array.Empty<string>()),
+            _ => false);
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -477,7 +553,9 @@ public sealed class SettingsWindowLayoutTests
                 return Task.CompletedTask;
             },
             _ => { },
-            () => null);
+            () => null,
+            _ => Task.FromResult(Array.Empty<string>()),
+            _ => false);
         AppSettings? savedSettings = null;
         var window = new SettingsWindow(new AppSettings(), settings => savedSettings = settings, manager, actions)
         {
@@ -507,10 +585,13 @@ public sealed class SettingsWindowLayoutTests
 
         var modelSelectionNav = Assert.IsType<RadioButton>(window.FindName("ModelSelectionNav"));
         Assert.Equal("Model Selection", modelSelectionNav.Content);
-        var engineList = Assert.IsType<ListBox>(window.FindName("EngineList"));
+        var engineList = Assert.IsType<ComboBox>(window.FindName("EngineList"));
+        Assert.Same(
+            Assert.IsType<TextBlock>(window.FindName("EngineListLabel")),
+            AutomationProperties.GetLabeledBy(engineList));
         Assert.Equal(
             ["Windows", "Azure", "GptTranscribe", "FunAsr"],
-            engineList.Items.Cast<ListBoxItem>()
+            engineList.Items.Cast<ComboBoxItem>()
                 .Select(item => Assert.IsType<string>(item.Tag))
                 .ToArray());
         var localModels = Assert.IsType<StackPanel>(window.FindName("LocalModelsPanel"));
@@ -534,9 +615,18 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(Visibility.Collapsed, azureFields.Visibility);
         Assert.Equal(Visibility.Visible, transcribeFields.Visibility);
         Assert.Contains("Configure GPT-4o Transcribe", selectionStatus.Text, StringComparison.Ordinal);
+        Layout(window, content, 720, 520);
+        Assert.Equal(0, modelSelectionPage.ScrollableHeight);
         engineList.SelectedIndex = 3;
         Assert.Equal(Visibility.Visible, localModels.Visibility);
         Assert.Contains("Download SenseVoiceSmall", selectionStatus.Text, StringComparison.Ordinal);
+        var overviewLocalModel = Assert.IsType<StackPanel>(window.FindName("OverviewLocalModelPanel"));
+        var overviewLocalReadiness = Assert.IsType<StackPanel>(window.FindName("OverviewLocalReadinessPanel"));
+        var overviewLlm = Assert.IsType<StackPanel>(window.FindName("OverviewLlmPanel"));
+        Assert.Equal(Visibility.Visible, overviewLocalModel.Visibility);
+        Assert.Equal(Visibility.Visible, overviewLocalReadiness.Visibility);
+        Assert.Equal(1, Grid.GetColumn(overviewLlm));
+        Assert.Equal(1, Grid.GetColumnSpan(overviewLlm));
         Assert.Contains(
             "Download SenseVoiceSmall to continue",
             Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,

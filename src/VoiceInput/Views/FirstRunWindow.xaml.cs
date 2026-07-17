@@ -111,7 +111,7 @@ public partial class FirstRunWindow : Window
         if (_pttMode == PttMode.Toggle)
         {
             PracticePttStepText.Text = $"按一下 {key} 开始";
-            PracticePttStepDetailText.Text = "松开按键后 VoiceInput 开始聆听";
+            PracticePttStepDetailText.Text = "松开按键后 gujiguji 开始聆听";
             PracticeReleaseStepText.Text = $"再按一下 {key} 结束";
             PracticeReleaseStepDetailText.Text = "识别完成后文字会回到当前光标位置";
             CompletionTalkStepText.Text = "按一下开始";
@@ -125,7 +125,7 @@ public partial class FirstRunWindow : Window
         else
         {
             PracticePttStepText.Text = $"按住 {key} 说话";
-            PracticePttStepDetailText.Text = "按住时 VoiceInput 才会聆听";
+            PracticePttStepDetailText.Text = "按住时 gujiguji 才会聆听";
             PracticeReleaseStepText.Text = "松开即可输入";
             PracticeReleaseStepDetailText.Text = "文字会回到刚才的光标位置";
             CompletionTalkStepText.Text = "按住说话";
@@ -134,7 +134,7 @@ public partial class FirstRunWindow : Window
                 $"在其他应用中点击文本框，按住 {key} 说话，松开后文字会输入到原来的光标位置。";
             AutomationProperties.SetHelpText(
                 PracticeTextBox,
-                $"点击这里，按住 {key} 说话，松开后 VoiceInput 会把结果输入到这个文本框。");
+                $"点击这里，按住 {key} 说话，松开后 gujiguji 会把结果输入到这个文本框。");
         }
 
         string mode = _pttMode == PttMode.Toggle ? "按一下开始 / 再按一下结束" : "按住说话";
@@ -463,7 +463,7 @@ public partial class FirstRunWindow : Window
             else if (PracticeTextBox.Text.Length == 0)
             {
                 SetPracticeStage(PracticeStage.Processing);
-                SetPracticeStatus("正在处理", "VoiceInput 会把识别结果输入到当前光标位置。", "BlueBrush");
+                SetPracticeStatus("正在处理", "gujiguji 会把识别结果输入到当前光标位置。", "BlueBrush");
             }
             return;
         }
@@ -476,7 +476,7 @@ public partial class FirstRunWindow : Window
         if (PracticeTextBox.Text.Length == 0)
         {
             SetPracticeStage(PracticeStage.Processing);
-            SetPracticeStatus("正在处理", "VoiceInput 会把识别结果输入到当前光标位置。", "BlueBrush");
+            SetPracticeStatus("正在处理", "gujiguji 会把识别结果输入到当前光标位置。", "BlueBrush");
         }
     }
 
@@ -553,7 +553,7 @@ public partial class FirstRunWindow : Window
         CompletionFooter.Visibility = Visibility.Visible;
         ProgressSecondHalf.Background = Brush("AccentBrush");
         StepCountText.Text = "2 / 2";
-        Title = "VoiceInput 已准备好";
+        Title = "gujiguji 已准备好";
         CompletionPage.ScrollToTop();
         FinishButton.Focus();
     }
@@ -566,7 +566,7 @@ public partial class FirstRunWindow : Window
         PracticeFooter.Visibility = Visibility.Visible;
         ProgressSecondHalf.Background = new SolidColorBrush(Color.FromRgb(0xE5, 0xEA, 0xEC));
         StepCountText.Text = "1 / 2";
-        Title = "VoiceInput 快速设置";
+        Title = "gujiguji 快速设置";
         PracticePage.ScrollToTop();
     }
 

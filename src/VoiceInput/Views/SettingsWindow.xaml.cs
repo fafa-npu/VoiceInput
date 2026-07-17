@@ -18,7 +18,9 @@ internal sealed record SettingsWindowActions(
     Action OpenLog,
     Func<string, Task> InstallFunAsr,
     Action<string> CancelFunAsr,
-    Func<string?> ActiveFunAsrModelId);
+    Func<string?> ActiveFunAsrModelId,
+    Func<AppSettings, Task<string[]>> ExtractVocabularyFromCorrections,
+    Func<IReadOnlyList<string>, bool> ConfirmVocabularySuggestions);
 
 public partial class SettingsWindow : Window
 {
@@ -39,6 +41,7 @@ public partial class SettingsWindow : Window
         new(StringComparer.OrdinalIgnoreCase);
     private string _selectedFunAsrModelId;
     private string? _availableUpdateTag;
+    private bool _extractingVocabulary;
     private bool _loading = true;
     private bool _closed;
 
@@ -192,7 +195,7 @@ public partial class SettingsWindow : Window
         if (checkBox.IsChecked == true)
         {
             string warning = checkBox == UseContextBox
-                ? "VoiceInput will read text from the focused app with UI Automation and send it to your configured LLM."
+                ? "gujiguji will read text from the focused app with UI Automation and send it to your configured LLM."
                 : checkBox == LearnFromEditsBox
                     ? "After insertion, Enter may capture the same input control. Up to 100 encrypted correction samples are stored locally."
                     : "Full transcripts, recognition vocabulary, and LLM output may contain sensitive data and will be written in plaintext to the diagnostic log.";
@@ -233,6 +236,79 @@ public partial class SettingsWindow : Window
             : Visibility.Collapsed;
         TranscribeTenantLabel.Visibility = TranscribeTenantIdBox.Visibility;
         LocalModelsPanel.Visibility = funAsr ? Visibility.Visible : Visibility.Collapsed;
+
+        bool llmConfigured = LlmEnabledBox.IsChecked == true
+            && LlmRefiner.IsSupportedEndpoint(LlmBaseUrlBox.Text.Trim())
+            && !string.IsNullOrWhiteSpace(LlmModelBox.Text);
+        UseContextBox.IsEnabled = llmConfigured;
+        LearnFromEditsBox.IsEnabled = llmConfigured;
+        SuggestVocabularyButton.IsEnabled = llmConfigured && !_extractingVocabulary;
+        if (!_extractingVocabulary)
+        {
+            VocabularySuggestionStatusText.Foreground = MutedBrush;
+            VocabularySuggestionStatusText.Text = llmConfigured
+                ? "Uses encrypted correction samples stored on this device."
+                : "Configure and enable LLM refinement to use this.";
+        }
+    }
+
+    private async void OnSuggestVocabulary(object sender, RoutedEventArgs e)
+    {
+        Collect();
+        if (!LlmRefiner.IsConfigured(_draft))
+        {
+            VocabularySuggestionStatusText.Foreground = ErrorBrush;
+            VocabularySuggestionStatusText.Text = "Configure and enable LLM refinement first.";
+            return;
+        }
+
+        _extractingVocabulary = true;
+        SuggestVocabularyButton.IsEnabled = false;
+        VocabularySuggestionStatusText.Foreground = MutedBrush;
+        VocabularySuggestionStatusText.Text = "Analyzing local correction samples...";
+        try
+        {
+            string[] candidates = await _actions.ExtractVocabularyFromCorrections(_draft.Clone());
+            if (_closed)
+                return;
+            if (candidates.Length == 0)
+            {
+                VocabularySuggestionStatusText.Text = "No recurring terms found.";
+                return;
+            }
+            if (!_actions.ConfirmVocabularySuggestions(candidates))
+            {
+                VocabularySuggestionStatusText.Text = "Suggestions not added.";
+                Log.Write($"Vocabulary suggestions dismissed candidateCount={candidates.Length}.");
+                return;
+            }
+
+            string[] current = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries;
+            string[] merged = RecognitionVocabulary.Normalize(current.Concat(candidates)).Entries;
+            int added = merged.Length - current.Length;
+            if (added == 0)
+            {
+                VocabularySuggestionStatusText.Text = "All suggested terms are already in the vocabulary.";
+                return;
+            }
+
+            VocabularyBox.Text = string.Join(", ", merged);
+            VocabularySuggestionStatusText.Foreground = SuccessBrush;
+            VocabularySuggestionStatusText.Text = $"Added {added} term{(added == 1 ? string.Empty : "s")}. Save changes to apply.";
+            Log.Write($"Vocabulary suggestions accepted candidateCount={candidates.Length} added={added}.");
+        }
+        catch (Exception exception)
+        {
+            Log.Error("Vocabulary suggestion", exception);
+            VocabularySuggestionStatusText.Foreground = ErrorBrush;
+            VocabularySuggestionStatusText.Text = exception.Message;
+        }
+        finally
+        {
+            _extractingVocabulary = false;
+            if (!_closed)
+                SuggestVocabularyButton.IsEnabled = LlmRefiner.IsConfigured(_draft);
+        }
     }
 
     private void Collect()
@@ -322,11 +398,17 @@ public partial class SettingsWindow : Window
 
     private void RefreshOverview()
     {
+        bool localEngine = _draft.Engine == SpeechEngineKind.FunAsr;
+        OverviewLocalModelPanel.Visibility = localEngine ? Visibility.Visible : Visibility.Collapsed;
+        OverviewLocalReadinessPanel.Visibility = localEngine ? Visibility.Visible : Visibility.Collapsed;
+        Grid.SetColumn(OverviewLlmPanel, localEngine ? 1 : 0);
+        Grid.SetColumnSpan(OverviewLlmPanel, localEngine ? 1 : 3);
+
         FunAsrModelDefinition selected = FunAsrModelCatalog.Get(_selectedFunAsrModelId);
-        bool installed = _funAsr.IsInstalled(selected.Id);
+        bool installed = _funAsr.HasInstalledFiles(selected.Id);
         bool compatible = selected.Supports(_draft.Language);
         bool localReady = installed && compatible;
-        int installedCount = FunAsrModelCatalog.Models.Count(model => _funAsr.IsInstalled(model.Id));
+        int installedCount = FunAsrModelCatalog.Models.Count(model => _funAsr.HasInstalledFiles(model.Id));
 
         OverviewActiveEngineText.Text = EngineDisplay(_draft.Engine);
         OverviewModelText.Text = selected.DisplayName;
@@ -349,7 +431,7 @@ public partial class SettingsWindow : Window
         }
         else
         {
-            OverviewReadinessTitle.Text = "VoiceInput is ready";
+            OverviewReadinessTitle.Text = "gujiguji is ready";
             OverviewReadinessText.Text = $"{EngineDisplay(_draft.Engine)} is selected for new dictation sessions.";
             OverviewBanner.Background = new SolidColorBrush(Color.FromRgb(244, 248, 245));
             OverviewBanner.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 210, 199));
@@ -403,7 +485,7 @@ public partial class SettingsWindow : Window
                     attention: true);
                 return;
             }
-            if (!_funAsr.IsInstalled(model.Id))
+            if (!_funAsr.HasInstalledFiles(model.Id))
             {
                 SetModelSelectionStatus(
                     $"{active} is active. Download {model.DisplayName} to finish this local selection.",
@@ -446,7 +528,7 @@ public partial class SettingsWindow : Window
             ? null
             : !localModel.Supports(_draft.Language)
                 ? $"Choose a local model that supports {_draft.Language}"
-                : !_funAsr.IsInstalled(localModel.Id)
+                : !_funAsr.HasInstalledFiles(localModel.Id)
                     ? $"Download {localModel.DisplayName} to continue"
                     : null;
 
@@ -612,7 +694,7 @@ public partial class SettingsWindow : Window
             ModelRow row = _modelRows[model.Id];
             bool selected = model.Id == _selectedFunAsrModelId;
             bool compatible = model.Supports(_draft.Language);
-            bool installed = _funAsr.IsInstalled(model.Id);
+            bool installed = _funAsr.HasInstalledFiles(model.Id);
             bool active = _original.Engine == SpeechEngineKind.FunAsr
                 && FunAsrModelCatalog.NormalizeId(_original.FunAsrModelId) == model.Id;
             bool willUse = installed && selected && _draft.Engine == SpeechEngineKind.FunAsr;
@@ -762,7 +844,7 @@ public partial class SettingsWindow : Window
             SetStatus($"{model.DisplayName} does not support {_draft.Language}.", ErrorBrush);
             return;
         }
-        if (!_funAsr.IsInstalled(modelId))
+        if (!_funAsr.HasInstalledFiles(modelId))
         {
             SetStatus($"Download {model.DisplayName} before selecting it.", ErrorBrush);
             return;
@@ -966,13 +1048,14 @@ public partial class SettingsWindow : Window
             FunAsrModelDefinition model = FunAsrModelCatalog.Get(_draft.FunAsrModelId);
             if (!model.Supports(_draft.Language))
                 return $"{model.DisplayName} does not support {_draft.Language}.";
-            if (!_funAsr.IsInstalled(model.Id))
+            if (!_funAsr.HasInstalledFiles(model.Id))
                 return $"Download {model.DisplayName} before selecting FunASR.";
         }
         if (_draft.LlmEnabled
-            && (!ValidEndpoint(_draft.LlmBaseUrl) || string.IsNullOrWhiteSpace(_draft.LlmModel)))
+            && (!LlmRefiner.IsSupportedEndpoint(_draft.LlmBaseUrl)
+                || string.IsNullOrWhiteSpace(_draft.LlmModel)))
         {
-            return "LLM refinement requires a valid HTTPS Base URL and Model.";
+            return "LLM refinement requires HTTPS, or HTTP on this device, plus a Model.";
         }
         return null;
     }

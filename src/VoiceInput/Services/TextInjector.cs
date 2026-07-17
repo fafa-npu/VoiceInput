@@ -31,7 +31,7 @@ public sealed class TextInjector
     {
         if (string.IsNullOrEmpty(text)) return Task.FromResult(new Result(true));
         if (!MatchesCurrentTarget(target))
-            return Task.FromResult(new Result(false, 0, "The focused window or input control changed while VoiceInput was processing."));
+            return Task.FromResult(new Result(false, 0, "The focused window or input control changed while gujiguji was processing."));
 
         var inputs = new INPUT[2];
         for (int i = 0; i < text.Length; i++)

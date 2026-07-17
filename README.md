@@ -1,14 +1,14 @@
-# VoiceInput (Windows)
+# gujiguji (Windows)
 
 A system-tray voice input method for Windows. Hold a key while speaking, or press once to start
-and again to stop. VoiceInput transcribes the recording and inserts it only if the original window
+and again to stop. gujiguji transcribes the recording and inserts it only if the original window
 and input control still have focus.
 
 Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
 ## What makes it different
 
-VoiceInput defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
+gujiguji defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
 optional **speech-aware LLM refinement layer** can be configured for:
 
 - **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
@@ -44,7 +44,7 @@ optional **speech-aware LLM refinement layer** can be configured for:
   device cold-start. The mic is fully released when idle or paused.
 - **Capsule overlay** at the bottom of the active monitor (multi-monitor aware) with a live,
   RMS-driven waveform and the running transcript; grows smoothly and shows the latest words.
-- **Target-safe injection.** VoiceInput records the original window, process, and focused control,
+- **Target-safe injection.** gujiguji records the original window, process, and focused control,
   refuses to type after focus changes, and checks every `SendInput` result. Uninserted text is
   preserved, copied to the clipboard, and available for retry from the tray. Windows security
   boundaries (for example an elevated app) can still block injection.
@@ -56,7 +56,7 @@ optional **speech-aware LLM refinement layer** can be configured for:
 | Action                   | How                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | **Talk**                 | Hold **Right Ctrl**, or select press-to-start/stop under Settings → App              |
-| **Start**                | Start Menu → **VoiceInput**, or it auto-starts at login                              |
+| **Start**                | Start Menu → **gujiguji**, or it auto-starts at login                               |
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
 | **Context-aware refine** | Tray → **Use surrounding context (UIA)** (off by default; sends app text to the LLM) |
@@ -74,6 +74,9 @@ $s="$env:TEMP\vi.ps1"; iwr https://github.com/fafa-npu/VoiceInput/raw/main/scrip
 Or just download `VoiceInput.exe` from the
 [Releases](https://github.com/fafa-npu/VoiceInput/releases) page and double-click it
 (it's self-contained — no .NET runtime needed).
+
+For seamless upgrades, the executable, repository, and data directories keep their existing
+`VoiceInput` technical names; the product and Windows shortcuts are shown as **gujiguji**.
 
 The installer installs the app only. On first launch, the guide offers to download the default
 SenseVoiceSmall model, CPU runtime, and VAD (about **260.8 MB** total). The download is resumable
@@ -147,7 +150,7 @@ build time, atomically replaced, and rolled back if the new process does not sta
   selected model, recording length, and the local CPU; no cloud fallback occurs after a local error.
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
-- UI Automation context is untrusted input. VoiceInput constrains refined output length, rejects
+- UI Automation context is untrusted input. gujiguji constrains refined output length, rejects
   control characters and large semantic drift, and falls back to the original transcript.
 - Edit learning is off by default, bound to the original control for two minutes, capped at 100
   samples, and encrypted per Windows user with DPAPI.

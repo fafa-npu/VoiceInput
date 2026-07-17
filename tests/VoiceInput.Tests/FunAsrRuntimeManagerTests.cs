@@ -361,6 +361,26 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task InstalledFileProbeDefersIntegrityCheck()
+    {
+        TestCatalog catalog = CreateTestCatalog();
+        using var manager = CreateManager(
+            new MappedBytesHandler(catalog.Content),
+            smokeTest: (_, _) => Task.CompletedTask,
+            catalog: catalog);
+        await manager.InstallAsync(catalog.Model.Id, CancellationToken.None);
+        string modelPath = Path.Combine(_root, catalog.Model.Artifacts[0].RelativePath);
+
+        File.WriteAllBytes(modelPath, "wrong"u8.ToArray());
+        File.SetLastWriteTimeUtc(modelPath, DateTime.UtcNow.AddSeconds(1));
+
+        Assert.True(manager.HasInstalledFiles(catalog.Model.Id));
+        Assert.False(manager.IsInstalled(catalog.Model.Id));
+        File.Delete(modelPath);
+        Assert.False(manager.HasInstalledFiles(catalog.Model.Id));
+    }
+
+    [Fact]
     public async Task OversizedResponseIsRejectedBeforeReadingBody()
     {
         byte[] expected = "model"u8.ToArray();

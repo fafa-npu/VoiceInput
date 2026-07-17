@@ -150,9 +150,11 @@ public sealed class AppController : IDisposable
     public void Start()
     {
         _overlay = new OverlayWindow { LevelSource = () => _level };
+        RefreshInstalledUninstaller();
+        MigrateLegacyShortcuts();
         BuildTray();
         _hook.Install();
-        Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, pttMode={_settings.PttMode}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
+        Log.Write($"=== gujiguji v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, pttMode={_settings.PttMode}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
         if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
@@ -331,7 +333,7 @@ public sealed class AppController : IDisposable
                     Notify("Transcription failed", _speechFault.UserMessage);
                 else if (_sessionPeak < 0.02f)
                     Notify("No microphone audio",
-                        "VoiceInput didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
+                        "gujiguji didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
                 _overlay!.HideAnimated();
                 return;
             }
@@ -340,7 +342,7 @@ public sealed class AppController : IDisposable
             var target = _inputTarget;
             if (target is null || !_injector.IsCurrentTarget(target))
             {
-                PreserveText(text, "The focused window or input control changed while VoiceInput was processing.");
+                PreserveText(text, "The focused window or input control changed while gujiguji was processing.");
                 _overlay!.HideAnimated();
                 return;
             }
@@ -372,7 +374,8 @@ public sealed class AppController : IDisposable
                 return;
             }
             Log.Write("Injected into focused control.");
-            if (_settings.LearnFromEdits) _corrections.Arm(raw, text, target);
+            if (_settings.LearnFromEdits && LlmRefiner.IsConfigured(_settings))
+                _corrections.Arm(raw, text, target);
             _session.MoveTo(DictationSessionState.Idle);
         }
         finally
@@ -601,7 +604,7 @@ public sealed class AppController : IDisposable
 
     private void BuildTray()
     {
-        _trayIcon = TrayIconFactory.CreateMicIcon();
+        _trayIcon = TrayIconFactory.CreateVoiceCursorIcon();
         _tray = new WinForms.NotifyIcon
         {
             Icon = _trayIcon,
@@ -612,12 +615,12 @@ public sealed class AppController : IDisposable
     }
 
     private string TrayTooltip() => _paused
-        ? "VoiceInput — paused"
+        ? "gujiguji — paused"
         : _session.State is not DictationSessionState.Idle
-            ? $"VoiceInput — {_session.State.ToString().ToLowerInvariant()}"
+            ? $"gujiguji — {_session.State.ToString().ToLowerInvariant()}"
             : _settings.PttMode == PttMode.Toggle
-                ? $"VoiceInput — press {PttDisplay(_settings.PttKey)} to start/stop"
-                : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+                ? $"gujiguji — press {PttDisplay(_settings.PttKey)} to start/stop"
+                : $"gujiguji — hold {PttDisplay(_settings.PttKey)} to talk";
 
     private void TogglePause()
     {
@@ -630,15 +633,63 @@ public sealed class AppController : IDisposable
         }
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
-            _paused ? "VoiceInput won't respond to the activation key until resumed."
+            _paused ? "gujiguji won't respond to the activation key until resumed."
                     : "Voice input activation is active again.");
         RebuildMenu();
     }
 
     private static string StartupShortcutPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "gujiguji.lnk");
+
+    private static string LegacyStartupShortcutPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "VoiceInput.lnk");
 
-    private static bool IsAutoStartEnabled() => File.Exists(StartupShortcutPath);
+    private static bool IsAutoStartEnabled() =>
+        File.Exists(StartupShortcutPath) || File.Exists(LegacyStartupShortcutPath);
+
+    private static void MigrateLegacyShortcuts()
+    {
+        foreach (Environment.SpecialFolder folder in
+                 new[] { Environment.SpecialFolder.Startup, Environment.SpecialFolder.Programs })
+        {
+            try { MigrateLegacyShortcut(Environment.GetFolderPath(folder)); }
+            catch (Exception ex) { Log.Error("MigrateLegacyShortcut", ex); }
+        }
+    }
+
+    private static void RefreshInstalledUninstaller()
+    {
+        try
+        {
+            string expectedDirectory = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VoiceInput"));
+            string? processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
+            if (processDirectory is null
+                || !Path.GetFullPath(processDirectory).Equals(expectedDirectory, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            using Stream source = typeof(AppController).Assembly
+                .GetManifestResourceStream("gujiguji.install.ps1")
+                ?? throw new InvalidOperationException("Embedded installer script was not found.");
+            using FileStream destination = File.Create(Path.Combine(processDirectory, "uninstall.ps1"));
+            source.CopyTo(destination);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("RefreshInstalledUninstaller", ex);
+        }
+    }
+
+    internal static void MigrateLegacyShortcut(string directory)
+    {
+        string legacy = Path.Combine(directory, "VoiceInput.lnk");
+        if (!File.Exists(legacy)) return;
+
+        string branded = Path.Combine(directory, "gujiguji.lnk");
+        if (File.Exists(branded)) File.Delete(legacy);
+        else File.Move(legacy, branded);
+    }
 
     private void SetAutoStart(bool enabled)
     {
@@ -649,14 +700,16 @@ public sealed class AppController : IDisposable
                 string exe = Environment.ProcessPath!;
                 string dir = Path.GetDirectoryName(exe)!;
                 string ps = $"$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{StartupShortcutPath}'); " +
-                            $"$l.TargetPath='{exe}'; $l.WorkingDirectory='{dir}'; $l.Description='VoiceInput'; $l.Save()";
+                            $"$l.TargetPath='{exe}'; $l.WorkingDirectory='{dir}'; $l.Description='gujiguji'; $l.Save()";
                 Process.Start(new ProcessStartInfo("powershell.exe",
                     $"-NoProfile -WindowStyle Hidden -Command \"{ps}\"")
                 { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit(5000);
+                MigrateLegacyShortcut(Environment.GetFolderPath(Environment.SpecialFolder.Startup));
             }
-            else if (File.Exists(StartupShortcutPath))
+            else
             {
-                File.Delete(StartupShortcutPath);
+                if (File.Exists(StartupShortcutPath)) File.Delete(StartupShortcutPath);
+                if (File.Exists(LegacyStartupShortcutPath)) File.Delete(LegacyStartupShortcutPath);
             }
         }
         catch (Exception ex)
@@ -713,6 +766,10 @@ public sealed class AppController : IDisposable
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
         var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
+        learnNow.Enabled = LlmRefiner.IsConfigured(_settings);
+        learnNow.ToolTipText = learnNow.Enabled
+            ? "Create refinement rules from locally stored correction samples."
+            : "Configure and enable LLM refinement first.";
         learnNow.Click += (_, _) => LearnFromCorrections();
         menu.Items.Add(learnNow);
 
@@ -850,7 +907,9 @@ public sealed class AppController : IDisposable
             () => OpenUri(Log.FilePath),
             InstallFunAsrAsync,
             CancelFunAsrInstall,
-            ActiveFunAsrModelId));
+            ActiveFunAsrModelId,
+            ExtractVocabularyFromCorrectionsAsync,
+            ConfirmVocabularySuggestions));
         if (firstRun is not null)
         {
             win.Owner = firstRun;
@@ -965,8 +1024,8 @@ public sealed class AppController : IDisposable
         }
 
         var answer = MessageBox.Show(
-            $"Update to {tag} now?\n\nVoiceInput will download the new version and restart.",
-            "VoiceInput update", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            $"Update to {tag} now?\n\ngujiguji will download the new version and restart.",
+            "gujiguji update", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (answer != MessageBoxResult.Yes) return;
 
         Notify("Updating…", $"Downloading {tag}. The app will restart when it's ready.");
@@ -989,7 +1048,12 @@ public sealed class AppController : IDisposable
 
     private void LearnFromCorrections()
     {
-        var pairs = _corrections.LoadPairs();
+        if (!LlmRefiner.IsConfigured(_settings))
+        {
+            Notify("LLM refinement required", "Configure and enable LLM refinement in Settings first.");
+            return;
+        }
+        var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
         if (pairs.Count < 3)
         {
             Notify("Not enough edits yet", $"{pairs.Count} captured. Keep dictating + editing (needs ~3+, and 'Learn from my edits' on).");
@@ -1010,7 +1074,7 @@ public sealed class AppController : IDisposable
             if (string.IsNullOrWhiteSpace(rules)) { Notify("Nothing learned", "No recurring patterns found."); return; }
             var ans = MessageBox.Show(
                 $"Apply these learned correction rules to your refine prompt?\n\n{rules}",
-                "VoiceInput — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                "gujiguji — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (ans == MessageBoxResult.Yes)
             {
                 _settings.LlmLearnedRules = rules;
@@ -1020,6 +1084,29 @@ public sealed class AppController : IDisposable
             }
         });
     }
+
+    private async Task<string[]> ExtractVocabularyFromCorrectionsAsync(AppSettings settings)
+    {
+        if (!LlmRefiner.IsConfigured(settings))
+            throw new InvalidOperationException("Configure and enable LLM refinement first.");
+
+        var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
+        if (pairs.Count < 3)
+            throw new InvalidOperationException(
+                $"Not enough edits yet ({pairs.Count} captured). At least 3 are required.");
+
+        Log.Write($"Vocabulary learning requested sampleCount={pairs.Count}.");
+        string[] candidates = await _refiner.ExtractVocabularyAsync(pairs, settings);
+        Log.Write($"Vocabulary learning completed candidateCount={candidates.Length}.");
+        return candidates;
+    }
+
+    private static bool ConfirmVocabularySuggestions(IReadOnlyList<string> candidates) =>
+        MessageBox.Show(
+            "Add these terms to Recognition Vocabulary?\n\n" + string.Join("\n", candidates.Select(term => $"- {term}")),
+            "gujiguji - vocabulary suggestions",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question) == MessageBoxResult.Yes;
 
     private void Notify(string title, string message) =>
         _tray?.ShowBalloonTip(6000, title, message, WinForms.ToolTipIcon.Info);

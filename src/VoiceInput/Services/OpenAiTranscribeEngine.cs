@@ -18,6 +18,8 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 {
     // 0.5 s of 16 kHz 16-bit mono PCM; shorter WAVs are rejected by GPT transcription.
     internal const int MinimumPcmBytes = AudioCapture.TargetSampleRate;
+    private const int EnergyWindowSamples = AudioCapture.TargetSampleRate / 50;
+    private const int MinimumAudibleAmplitude = 131; // 0.004 of full scale, matching the UI silence threshold.
     private const string Scope = "https://cognitiveservices.azure.com/.default";
     // ponytail: bump if Foundry rejects gpt-4o-transcribe at this version.
     private const string ApiVersion = "2025-03-01-preview";
@@ -132,6 +134,11 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
                 "Recording was too short to transcribe. Speak for at least half a second and try again."));
             return;
         }
+        if (!HasAudibleSignal(pcm))
+        {
+            Log.Write("OpenAiTranscribeEngine: silent recording skipped before transcription.");
+            return;
+        }
 
         var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
         lock (_lock)
@@ -228,6 +235,26 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     private static string TwoLetter(string lang) =>
         string.IsNullOrEmpty(lang) ? string.Empty : lang.Split('-')[0].ToLowerInvariant();
+
+    private static bool HasAudibleSignal(byte[] pcm)
+    {
+        const long minimumEnergy = (long)MinimumAudibleAmplitude * MinimumAudibleAmplitude;
+        for (int start = 0; start + 1 < pcm.Length; start += EnergyWindowSamples * 2)
+        {
+            int end = Math.Min(start + EnergyWindowSamples * 2, pcm.Length);
+            long energy = 0;
+            int samples = 0;
+            for (int offset = start; offset + 1 < end; offset += 2)
+            {
+                short sample = (short)(pcm[offset] | (pcm[offset + 1] << 8));
+                energy += (long)sample * sample;
+                samples++;
+            }
+            if (energy >= minimumEnergy * samples)
+                return true;
+        }
+        return false;
+    }
 
     internal static string FormatHttpFailure(HttpResponseMessage response, string body)
     {

@@ -1,4 +1,4 @@
-# VoiceInput - Windows menu-bar (system tray) voice input method
+# gujiguji - Windows menu-bar (system tray) voice input method
 # Mirrors the macOS Swift Package + Makefile workflow with the .NET toolchain.
 
 PROJECT      := src/VoiceInput/VoiceInput.csproj

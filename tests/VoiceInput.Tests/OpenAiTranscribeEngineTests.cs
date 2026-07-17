@@ -23,7 +23,7 @@ public sealed class OpenAiTranscribeEngineTests
                 return JsonResponse(HttpStatusCode.OK, """{"text":"done"}""");
             });
         await engine.StartAsync("en-US");
-        engine.Feed(new byte[OpenAiTranscribeEngine.MinimumPcmBytes]);
+        engine.Feed(PcmWithAmplitude(1000));
 
         await engine.StopAsync();
 
@@ -46,7 +46,7 @@ public sealed class OpenAiTranscribeEngineTests
                 return JsonResponse(HttpStatusCode.OK, """{"text":"done"}""");
             });
         await engine.StartAsync("en-US");
-        engine.Feed(new byte[OpenAiTranscribeEngine.MinimumPcmBytes]);
+        engine.Feed(PcmWithAmplitude(1000));
 
         await engine.StopAsync();
 
@@ -70,7 +70,7 @@ public sealed class OpenAiTranscribeEngineTests
         SpeechFault? fault = null;
         engine.Fault += value => fault = value;
         await engine.StartAsync("en-US");
-        engine.Feed(new byte[OpenAiTranscribeEngine.MinimumPcmBytes]);
+        engine.Feed(PcmWithAmplitude(1000));
 
         await engine.StopAsync();
 
@@ -132,6 +132,32 @@ public sealed class OpenAiTranscribeEngineTests
     }
 
     [Fact]
+    public async Task SilentCaptureSkipsTranscriptionRequestEvenWithVocabulary()
+    {
+        bool requestSent = false;
+        string? final = null;
+        using var engine = new OpenAiTranscribeEngine(
+            "http://localhost/transcribe",
+            (_, _) => Task.CompletedTask,
+            ["Contoso", "Project Falcon"],
+            (_, _) =>
+            {
+                requestSent = true;
+                return Task.FromResult(JsonResponse(
+                    HttpStatusCode.OK,
+                    "{\"text\":\"Contoso Project Falcon\"}"));
+            });
+        engine.Final += value => final = value;
+        await engine.StartAsync("en-US");
+        engine.Feed(PcmWithAmplitude(64));
+
+        await engine.StopAsync();
+
+        Assert.False(requestSent);
+        Assert.Null(final);
+    }
+
+    [Fact]
     public async Task ConcurrentCancellationDoesNotThrowOrReportFault()
     {
         var authStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -143,7 +169,7 @@ public sealed class OpenAiTranscribeEngineTests
         SpeechFault? fault = null;
         engine.Fault += value => fault = value;
         await engine.StartAsync("en-US");
-        engine.Feed(new byte[OpenAiTranscribeEngine.MinimumPcmBytes]);
+        engine.Feed(PcmWithAmplitude(1000));
 
         Task stop = engine.StopAsync();
         await authStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -167,6 +193,17 @@ public sealed class OpenAiTranscribeEngineTests
                 fields[name] = await part.ReadAsStringAsync();
         }
         return fields;
+    }
+
+    private static byte[] PcmWithAmplitude(short amplitude)
+    {
+        var pcm = new byte[OpenAiTranscribeEngine.MinimumPcmBytes];
+        for (int offset = 0; offset < pcm.Length; offset += 2)
+        {
+            pcm[offset] = (byte)(amplitude & 0xff);
+            pcm[offset + 1] = (byte)(amplitude >> 8);
+        }
+        return pcm;
     }
 
     private static HttpResponseMessage JsonResponse(HttpStatusCode status, string json) => new(status)

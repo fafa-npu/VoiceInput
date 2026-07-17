@@ -88,7 +88,11 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
     public event Action<FunAsrInstallProgress>? ProgressChanged;
 
-    public bool IsInstalled(string modelId)
+    public bool IsInstalled(string modelId) => InstallationMatches(modelId, verifyHashes: true);
+
+    public bool HasInstalledFiles(string modelId) => InstallationMatches(modelId, verifyHashes: false);
+
+    private bool InstallationMatches(string modelId, bool verifyHashes)
     {
         FunAsrModelDefinition model = _getModel(modelId);
         InstallationManifest manifest = LoadManifest();
@@ -100,9 +104,13 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             && manifest.Models.TryGetValue(model.Id, out List<InstalledArtifact>? installedArtifacts)
             && installedArtifacts is not null
             && ArtifactsMatch(installedArtifacts, model.Artifacts)
-            && model.Artifacts.All(ArtifactIsVerified)
-            && ArtifactIsVerified(_vadArtifact)
-            && RuntimeFilesAreVerified(manifest.RuntimeFiles);
+            && (verifyHashes
+                ? model.Artifacts.All(ArtifactIsVerified)
+                    && ArtifactIsVerified(_vadArtifact)
+                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: true)
+                : model.Artifacts.All(ArtifactExists)
+                    && ArtifactExists(_vadArtifact)
+                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: false));
     }
 
     public FunAsrResolvedModel Resolve(string modelId)
@@ -459,7 +467,12 @@ internal sealed class FunAsrRuntimeManager : IDisposable
     private bool ArtifactIsVerified(FunAsrArtifact artifact) =>
         FileIsVerified(ResolvePath(artifact.RelativePath), artifact.Size, artifact.Sha256);
 
-    private bool RuntimeFilesAreVerified(IReadOnlyCollection<InstalledArtifact>? installed)
+    private bool RuntimeFilesAreVerified(IReadOnlyCollection<InstalledArtifact>? installed) =>
+        RuntimeFilesMatch(installed, verifyHashes: true);
+
+    private bool RuntimeFilesMatch(
+        IReadOnlyCollection<InstalledArtifact>? installed,
+        bool verifyHashes)
     {
         if (installed is null || installed.Count != RequiredExecutables.Length)
             return false;
@@ -469,8 +482,12 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             InstalledArtifact? expected = installed.FirstOrDefault(item =>
                 item is not null
                 && string.Equals(item.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase));
-            if (expected is null
-                || !FileIsVerified(ResolvePath(relativePath), expected.Size, expected.Sha256))
+            if (expected is null)
+                return false;
+            string path = ResolvePath(relativePath);
+            if (verifyHashes
+                ? !FileIsVerified(path, expected.Size, expected.Sha256)
+                : !File.Exists(path) || new FileInfo(path).Length != expected.Size)
             {
                 return false;
             }

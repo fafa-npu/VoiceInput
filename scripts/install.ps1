@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-  One-click installer for VoiceInput.
+  One-click installer for gujiguji.
 
 .DESCRIPTION
-  Installs VoiceInput to %LOCALAPPDATA%\VoiceInput, enables auto-start at login, and launches it.
+  Installs gujiguji to %LOCALAPPDATA%\VoiceInput, enables auto-start at login, and launches it.
   With no -Source, it builds a self-contained single-file exe from source (needs the .NET 10 SDK).
   With -Source <exe>, it installs a prebuilt exe (e.g. one downloaded from a Release) - no SDK needed.
 
@@ -27,10 +27,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $AppName    = 'VoiceInput'
+$DisplayName = 'gujiguji'
 $ExeName    = 'VoiceInput.exe'
 $InstallDir   = Join-Path $env:LOCALAPPDATA $AppName
-$StartupLnk   = Join-Path ([Environment]::GetFolderPath('Startup')) ($AppName + '.lnk')
-$StartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($AppName + '.lnk')
+$StartupLnk   = Join-Path ([Environment]::GetFolderPath('Startup')) ($DisplayName + '.lnk')
+$StartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($DisplayName + '.lnk')
+$LegacyStartupLnk   = Join-Path ([Environment]::GetFolderPath('Startup')) ($AppName + '.lnk')
+$LegacyStartMenuLnk = Join-Path ([Environment]::GetFolderPath('Programs')) ($AppName + '.lnk')
 $UserDataDir = Join-Path $env:APPDATA $AppName
 
 function New-AppShortcut($path) {
@@ -38,7 +41,7 @@ function New-AppShortcut($path) {
     $lnk = $shell.CreateShortcut($path)
     $lnk.TargetPath       = Join-Path $InstallDir $ExeName
     $lnk.WorkingDirectory = $InstallDir
-    $lnk.Description       = 'VoiceInput - voice input for Windows'
+    $lnk.Description       = 'gujiguji - voice-to-agent dictation for Windows'
     $lnk.Save()
 }
 
@@ -68,9 +71,11 @@ if ($Uninstall) {
     Stop-App
     if (Test-Path $StartupLnk) { Remove-Item $StartupLnk -Force }
     if (Test-Path $StartMenuLnk) { Remove-Item $StartMenuLnk -Force }
+    if (Test-Path $LegacyStartupLnk) { Remove-Item $LegacyStartupLnk -Force }
+    if (Test-Path $LegacyStartMenuLnk) { Remove-Item $LegacyStartMenuLnk -Force }
     if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
     if (-not $KeepUserData -and (Test-Path $UserDataDir)) { Remove-Item $UserDataDir -Recurse -Force }
-    Write-Host 'VoiceInput uninstalled.' -ForegroundColor Green
+    Write-Host 'gujiguji uninstalled.' -ForegroundColor Green
     return
 }
 
@@ -97,7 +102,7 @@ if (-not $Source) {
     }
     else {
         # Not run from a clone (e.g. the one-line web installer): download the latest release exe.
-        Write-Host 'Downloading the latest VoiceInput.exe...' -ForegroundColor Cyan
+        Write-Host 'Downloading the latest gujiguji release (VoiceInput.exe)...' -ForegroundColor Cyan
         $Source = Join-Path $env:TEMP $ExeName
         Invoke-WebRequest 'https://github.com/fafa-npu/VoiceInput/releases/latest/download/VoiceInput.exe' -OutFile $Source
     }
@@ -122,10 +127,12 @@ Write-Host "Installed to $InstallDir\$ExeName" -ForegroundColor Green
 # Auto-start at login (Startup folder) + a Start Menu entry so it's launchable by name.
 New-AppShortcut $StartupLnk
 New-AppShortcut $StartMenuLnk
+Remove-Item -LiteralPath $LegacyStartupLnk -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $LegacyStartMenuLnk -Force -ErrorAction SilentlyContinue
 Write-Host 'Auto-start enabled (runs at login); Start Menu entry created.' -ForegroundColor Green
 
 if (-not $NoLaunch) {
     Start-Process (Join-Path $InstallDir $ExeName)
-    Write-Host 'VoiceInput is running. Configure the activation mode and key under Settings > App.' -ForegroundColor Green
+    Write-Host 'gujiguji is running. Configure the activation mode and key under Settings > App.' -ForegroundColor Green
 }
 Write-Host "Uninstall any time: powershell -File `"$InstallDir\uninstall.ps1`" -Uninstall"
