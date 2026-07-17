@@ -45,17 +45,34 @@ public sealed class SettingsStore
         try
         {
             if (!File.Exists(_filePath))
-                return new AppSettings();
+            {
+                var fresh = new AppSettings
+                {
+                    Engine = SpeechEngineKind.FunAsr,
+                    FunAsrModelId = FunAsrModelCatalog.DefaultId,
+                };
+                Log.Write($"Vocabulary settings-load modelKind={fresh.TranscribeModelKind} configured=0 accepted=0 rejected=0");
+                return fresh;
+            }
 
             var dto = JsonSerializer.Deserialize<PersistedSettings>(File.ReadAllText(_filePath), JsonOptions);
             if (dto is null)
-                return new AppSettings();
+                throw new JsonException("Settings JSON root was null.");
 
-            return new AppSettings
+            TranscribeModelKind modelKind = ParseModelKind(dto.TranscribeModelKind);
+            (RecognitionVocabularyNormalization vocabulary, bool invalidVocabularyShape) =
+                ParseVocabulary(dto.RecognitionVocabulary);
+            (InputProfile[] profiles, bool invalidProfilesShape) = ParseProfiles(
+                dto.Profiles,
+                dto.PttKey,
+                dto.PttMode);
+
+            var settings = new AppSettings
             {
                 OnboardingCompleted = dto.OnboardingCompleted,
                 Language = dto.Language,
-                PttKey = dto.PttKey,
+                Profiles = profiles,
+                ActiveProfileId = dto.ActiveProfileId,
                 Engine = dto.Engine,
                 FunAsrModelId = FunAsrModelCatalog.NormalizeId(dto.FunAsrModelId),
                 AzureRegion = dto.AzureRegion,
@@ -65,6 +82,8 @@ public sealed class SettingsStore
                 AzureTenantId = dto.AzureTenantId,
                 TranscribeEndpoint = dto.TranscribeEndpoint,
                 TranscribeModel = dto.TranscribeModel,
+                TranscribeModelKind = modelKind,
+                RecognitionVocabulary = vocabulary.Entries,
                 TranscribeAuthMode = dto.TranscribeAuthMode,
                 TranscribeApiKey = Unprotect(dto.TranscribeApiKeyEnc),
                 TranscribeTenantId = dto.TranscribeTenantId,
@@ -78,10 +97,19 @@ public sealed class SettingsStore
                 DiagnosticLogging = dto.DiagnosticLogging,
                 UseContext = dto.UseContext,
             };
+
+            string level = modelKind == TranscribeModelKind.Unknown || invalidVocabularyShape ? "WARN " : string.Empty;
+            Log.Write($"{level}Vocabulary settings-load modelKind={modelKind} configured={vocabulary.ConfiguredCount} " +
+                $"accepted={vocabulary.AcceptedCount} rejected={vocabulary.RejectedCount}");
+            Log.Write($"{(invalidProfilesShape ? "WARN " : string.Empty)}Profile settings-load " +
+                $"active={settings.ActiveProfileId} name={settings.ActiveProfile.Name} " +
+                $"key={settings.PttKey} mode={settings.PttMode} overlay={settings.ActiveProfile.OverlayPosition}");
+            return settings;
         }
-        catch
+        catch (Exception ex)
         {
             // Corrupt or unreadable settings should never crash startup.
+            Log.Error("Settings load", ex);
             return new AppSettings();
         }
     }
@@ -89,11 +117,22 @@ public sealed class SettingsStore
     public void Save(AppSettings s)
     {
         Directory.CreateDirectory(_dir);
+        RecognitionVocabularyNormalization vocabulary =
+            RecognitionVocabulary.Normalize(s.RecognitionVocabulary ?? []);
+        TranscribeModelKind modelKind = Enum.IsDefined(s.TranscribeModelKind)
+            ? s.TranscribeModelKind
+            : TranscribeModelKind.Unknown;
+        InputProfile[] profiles = InputProfile.Normalize(s.Profiles, s.PttKey, s.PttMode);
+        string activeProfileId = InputProfile.NormalizeId(s.ActiveProfileId);
+        InputProfile activeProfile = profiles.First(profile => profile.Id == activeProfileId);
         var dto = new PersistedSettings
         {
             OnboardingCompleted = s.OnboardingCompleted,
             Language = s.Language,
-            PttKey = s.PttKey,
+            PttKey = activeProfile.PttKey,
+            PttMode = activeProfile.PttMode,
+            Profiles = JsonSerializer.SerializeToElement(profiles, JsonOptions),
+            ActiveProfileId = activeProfileId,
             Engine = s.Engine,
             FunAsrModelId = FunAsrModelCatalog.NormalizeId(s.FunAsrModelId),
             AzureRegion = s.AzureRegion,
@@ -103,6 +142,8 @@ public sealed class SettingsStore
             AzureTenantId = s.AzureTenantId,
             TranscribeEndpoint = s.TranscribeEndpoint,
             TranscribeModel = s.TranscribeModel,
+            TranscribeModelKind = JsonSerializer.SerializeToElement(modelKind.ToString()),
+            RecognitionVocabulary = JsonSerializer.SerializeToElement(vocabulary.Entries),
             TranscribeAuthMode = s.TranscribeAuthMode,
             TranscribeApiKeyEnc = Protect(s.TranscribeApiKey),
             TranscribeTenantId = s.TranscribeTenantId,
@@ -136,6 +177,77 @@ public sealed class SettingsStore
         {
             try { File.Delete(temp); } catch { /* Preserve the original save exception. */ }
         }
+
+        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(s.Engine, modelKind);
+        string level = modelKind == TranscribeModelKind.Unknown ? "WARN " : string.Empty;
+        Log.Write($"{level}Vocabulary settings-save engine={s.Engine} modelKind={modelKind} mode={mode} " +
+            $"configured={vocabulary.ConfiguredCount} accepted={vocabulary.AcceptedCount} rejected={vocabulary.RejectedCount}");
+        Log.Write($"Profile settings-save active={activeProfileId} name={activeProfile.Name} " +
+            $"key={activeProfile.PttKey} mode={activeProfile.PttMode} overlay={activeProfile.OverlayPosition}");
+    }
+
+    private static TranscribeModelKind ParseModelKind(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.String)
+            return TranscribeModelKind.Unknown;
+
+        string? text = value.GetString();
+        return Enum.TryParse(text, ignoreCase: true, out TranscribeModelKind modelKind) &&
+               Enum.IsDefined(modelKind) &&
+               string.Equals(text, modelKind.ToString(), StringComparison.OrdinalIgnoreCase)
+            ? modelKind
+            : TranscribeModelKind.Unknown;
+    }
+
+    private static (RecognitionVocabularyNormalization Vocabulary, bool InvalidShape) ParseVocabulary(JsonElement value)
+    {
+        if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            return (RecognitionVocabulary.Normalize([]), false);
+
+        if (value.ValueKind != JsonValueKind.Array)
+            return (RecognitionVocabulary.Normalize([]), true);
+
+        var strings = new List<string?>();
+        int nonStringCount = 0;
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+                strings.Add(item.GetString());
+            else
+                nonStringCount++;
+        }
+
+        RecognitionVocabularyNormalization normalized = RecognitionVocabulary.Normalize(strings);
+        return (new RecognitionVocabularyNormalization(
+            normalized.Entries,
+            normalized.ConfiguredCount + nonStringCount,
+            normalized.RejectedCount + nonStringCount),
+            nonStringCount > 0);
+    }
+
+    private static (InputProfile[] Profiles, bool InvalidShape) ParseProfiles(
+        JsonElement value,
+        string legacyKey,
+        PttMode legacyMode)
+    {
+        InputProfile[] fallback = InputProfile.CreateDefaults(legacyKey, legacyMode);
+        if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            return (fallback, false);
+        if (value.ValueKind != JsonValueKind.Array)
+            return (fallback, true);
+
+        try
+        {
+            InputProfile?[]? parsed = JsonSerializer.Deserialize<InputProfile?[]>(value.GetRawText(), JsonOptions);
+            bool hasBothProfiles = parsed is not null
+                && parsed.Any(profile => profile?.Id == InputProfile.Profile1Id)
+                && parsed.Any(profile => profile?.Id == InputProfile.Profile2Id);
+            return (InputProfile.Normalize(parsed, legacyKey, legacyMode), !hasBothProfiles);
+        }
+        catch (JsonException)
+        {
+            return (fallback, true);
+        }
     }
 
     private static string Protect(string? plaintext)
@@ -168,6 +280,9 @@ public sealed class SettingsStore
         public bool OnboardingCompleted { get; set; } = true;
         public string Language { get; set; } = "zh-CN";
         public string PttKey { get; set; } = "RightCtrl";
+        public PttMode PttMode { get; set; } = PttMode.Hold;
+        public JsonElement Profiles { get; set; }
+        public string ActiveProfileId { get; set; } = InputProfile.Profile1Id;
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
         public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
         public string AzureRegion { get; set; } = "eastasia";
@@ -177,6 +292,8 @@ public sealed class SettingsStore
         public string AzureTenantId { get; set; } = string.Empty;
         public string TranscribeEndpoint { get; set; } = string.Empty;
         public string TranscribeModel { get; set; } = "gpt-4o-transcribe";
+        public JsonElement TranscribeModelKind { get; set; }
+        public JsonElement RecognitionVocabulary { get; set; }
         public AzureAuthMode TranscribeAuthMode { get; set; } = AzureAuthMode.EntraId;
         public string TranscribeApiKeyEnc { get; set; } = string.Empty;
         public string TranscribeTenantId { get; set; } = string.Empty;

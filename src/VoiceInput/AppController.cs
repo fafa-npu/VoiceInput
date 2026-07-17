@@ -10,6 +10,9 @@ using WinForms = System.Windows.Forms;
 
 namespace VoiceInput;
 
+internal enum PttGesture { Engaged, Released, Cancelled, RecoveredRelease }
+internal enum PttGestureAction { None, Start, Stop, Cancel, Busy }
+
 /// <summary>
 /// Wires together the keyboard hook, audio capture, speech engine, overlay, LLM refiner, and
 /// text injector, and hosts the system-tray menu. One instance owns the whole app lifecycle.
@@ -68,28 +71,112 @@ public sealed class AppController : IDisposable
         _settings = _store.Load();
 
         _hook = new KeyboardHook(_settings.PttKey);
-        _hook.Engaged += () => _ui.BeginInvoke(() =>
-        {
-            if (_session.State is DictationSessionState.Transcribing or DictationSessionState.Refining)
-            {
-                Notify("Still processing", "Wait for the current dictation to finish before starting another.");
-                return;
-            }
-            _ = StartDictationAsync();
-        });
-        _hook.Released += () => _ui.BeginInvoke(() => _ = StopDictationAsync());
-        _hook.Cancelled += () => _ui.BeginInvoke(() => _ = CancelDictationAsync());
+        _hook.Engaged += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Engaged));
+        _hook.Released += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Released));
+        // RecoveredRelease is raised by the UI-thread watchdog. Handle it immediately so a missed
+        // key-up cannot sit in the dispatcher queue behind the user's next Ctrl gesture.
+        _hook.RecoveredRelease += () => HandlePttGesture(PttGesture.RecoveredRelease);
+        _hook.Cancelled += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Cancelled));
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
+        _hook.ProfileSwitchRequested += () => _ui.BeginInvoke(HandleProfileSwitchRequested);
 
         _audio.LevelChanged += lvl => { _level = lvl; if (lvl > _sessionPeak) _sessionPeak = lvl; };
     }
 
+    internal static PttGestureAction ResolvePttGesture(
+        PttMode mode,
+        PttGesture gesture,
+        bool dictating,
+        DictationSessionState state)
+    {
+        bool busy = state is DictationSessionState.Transcribing
+            or DictationSessionState.Refining
+            or DictationSessionState.Injecting;
+
+        if (mode == PttMode.Toggle)
+        {
+            if (gesture is not (PttGesture.Released or PttGesture.RecoveredRelease))
+                return PttGestureAction.None;
+            if (busy) return PttGestureAction.Busy;
+            return dictating ? PttGestureAction.Stop : PttGestureAction.Start;
+        }
+
+        return gesture switch
+        {
+            PttGesture.Engaged when busy => PttGestureAction.Busy,
+            PttGesture.Engaged => PttGestureAction.Start,
+            PttGesture.Released or PttGesture.RecoveredRelease => PttGestureAction.Stop,
+            PttGesture.Cancelled => PttGestureAction.Cancel,
+            _ => PttGestureAction.None,
+        };
+    }
+
+    internal static PttMode ResolvePttModeAfterSettingsSave(
+        PttMode current,
+        PttMode settingsOpenedWith,
+        PttMode submitted) =>
+        submitted == settingsOpenedWith ? current : submitted;
+
+    internal static string ResolveActiveProfileAfterSettingsSave(
+        string current,
+        string settingsOpenedWith,
+        string submitted) =>
+        submitted == settingsOpenedWith ? current : submitted;
+
+    internal static bool CanSwitchProfile(bool dictating, DictationSessionState state) =>
+        !dictating && state is not (
+            DictationSessionState.Starting
+            or DictationSessionState.Listening
+            or DictationSessionState.Transcribing
+            or DictationSessionState.Refining
+            or DictationSessionState.Injecting);
+
+    internal static string NextProfileId(string current) =>
+        current == InputProfile.Profile2Id ? InputProfile.Profile1Id : InputProfile.Profile2Id;
+
+    internal static (SpeechEngineKind Engine, string ModelId) ResolveOnboardingRecognition(
+        FirstRunCompletionChoice choice,
+        SpeechEngineKind currentEngine,
+        string currentModelId) => choice switch
+        {
+            FirstRunCompletionChoice.DefaultLocal =>
+                (SpeechEngineKind.FunAsr, FunAsrModelCatalog.DefaultId),
+            FirstRunCompletionChoice.WindowsFallback =>
+                (SpeechEngineKind.Windows, currentModelId),
+            _ => (currentEngine, currentModelId),
+        };
+
+    private void HandlePttGesture(PttGesture gesture)
+    {
+        switch (ResolvePttGesture(_settings.PttMode, gesture, _dictating, _session.State))
+        {
+            case PttGestureAction.Start:
+                _ = StartDictationAsync();
+                break;
+            case PttGestureAction.Stop:
+                _ = StopDictationAsync();
+                break;
+            case PttGestureAction.Cancel:
+                _ = CancelDictationAsync();
+                break;
+            case PttGestureAction.Busy:
+                Notify("Still processing", "Wait for the current dictation to finish before starting another.");
+                break;
+        }
+    }
+
     public void Start()
     {
-        _overlay = new OverlayWindow { LevelSource = () => _level };
+        _overlay = new OverlayWindow
+        {
+            LevelSource = () => _level,
+            Position = _settings.ActiveProfile.OverlayPosition,
+        };
+        RefreshInstalledUninstaller();
+        MigrateLegacyShortcuts();
         BuildTray();
         _hook.Install();
-        Log.Write($"=== VoiceInput v{UpdateService.CurrentVersion} started. ptt={_settings.PttKey}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
+        Log.Write($"=== gujiguji v{UpdateService.CurrentVersion} started. profile={_settings.ActiveProfile.Name}, ptt={_settings.PttKey}, pttMode={_settings.PttMode}, overlay={_settings.ActiveProfile.OverlayPosition}, engine={_settings.Engine}, lang={_settings.Language}, llm={_settings.LlmEnabled} ===");
         Log.Write("Windows dictation languages available: " + WindowsSpeechEngine.SupportedTopicLanguageTags());
 
         if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
@@ -268,7 +355,7 @@ public sealed class AppController : IDisposable
                     Notify("Transcription failed", _speechFault.UserMessage);
                 else if (_sessionPeak < 0.02f)
                     Notify("No microphone audio",
-                        "VoiceInput didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
+                        "gujiguji didn't capture any sound. If you're in a Teams/other call, it may be holding the mic — you both share one redirected microphone.");
                 _overlay!.HideAnimated();
                 return;
             }
@@ -277,7 +364,7 @@ public sealed class AppController : IDisposable
             var target = _inputTarget;
             if (target is null || !_injector.IsCurrentTarget(target))
             {
-                PreserveText(text, "The focused window or input control changed while VoiceInput was processing.");
+                PreserveText(text, "The focused window or input control changed while gujiguji was processing.");
                 _overlay!.HideAnimated();
                 return;
             }
@@ -309,7 +396,8 @@ public sealed class AppController : IDisposable
                 return;
             }
             Log.Write("Injected into focused control.");
-            if (_settings.LearnFromEdits) _corrections.Arm(raw, text, target);
+            if (_settings.LearnFromEdits && LlmRefiner.IsConfigured(_settings))
+                _corrections.Arm(raw, text, target);
             _session.MoveTo(DictationSessionState.Idle);
         }
         finally
@@ -422,6 +510,8 @@ public sealed class AppController : IDisposable
 
     private ISpeechEngine CreateEngine(out bool azureFellBack)
     {
+        RecognitionVocabularyEvaluation vocabulary = RecognitionVocabulary.Evaluate(_settings);
+        Log.Write(RecognitionVocabulary.FormatSessionLog(_settings, vocabulary));
         azureFellBack = false;
         switch (_settings.Engine)
         {
@@ -431,11 +521,15 @@ public sealed class AppController : IDisposable
                     if (!string.IsNullOrWhiteSpace(_settings.AzureEndpoint))
                         return AzureSpeechEngine.ForEntra(
                             _settings.AzureEndpoint,
-                            EntraCredentialFactory.Create(_settings.AzureTenantId));
+                            EntraCredentialFactory.Create(_settings.AzureTenantId),
+                            vocabulary.Entries);
                 }
                 else if (!string.IsNullOrWhiteSpace(_settings.AzureKey) && !string.IsNullOrWhiteSpace(_settings.AzureRegion))
                 {
-                    return AzureSpeechEngine.ForKey(_settings.AzureKey, _settings.AzureRegion);
+                    return AzureSpeechEngine.ForKey(
+                        _settings.AzureKey,
+                        _settings.AzureRegion,
+                        vocabulary.Entries);
                 }
                 azureFellBack = true;
                 throw new InvalidOperationException(_settings.AzureAuthMode == AzureAuthMode.Key
@@ -448,14 +542,19 @@ public sealed class AppController : IDisposable
                     if (_settings.TranscribeAuthMode == AzureAuthMode.Key)
                     {
                         if (!string.IsNullOrWhiteSpace(_settings.TranscribeApiKey))
-                            return OpenAiTranscribeEngine.ForKey(_settings.TranscribeEndpoint, _settings.TranscribeModel, _settings.TranscribeApiKey);
+                            return OpenAiTranscribeEngine.ForKey(
+                                _settings.TranscribeEndpoint,
+                                _settings.TranscribeModel,
+                                _settings.TranscribeApiKey,
+                                vocabulary.Entries);
                     }
                     else
                     {
                         return OpenAiTranscribeEngine.ForEntra(
                             _settings.TranscribeEndpoint,
                             _settings.TranscribeModel,
-                            EntraCredentialFactory.Create(_settings.TranscribeTenantId));
+                            EntraCredentialFactory.Create(_settings.TranscribeTenantId),
+                            vocabulary.Entries);
                     }
                 }
                 azureFellBack = true;
@@ -527,7 +626,7 @@ public sealed class AppController : IDisposable
 
     private void BuildTray()
     {
-        _trayIcon = TrayIconFactory.CreateMicIcon();
+        _trayIcon = TrayIconFactory.CreateVoiceCursorIcon();
         _tray = new WinForms.NotifyIcon
         {
             Icon = _trayIcon,
@@ -537,11 +636,58 @@ public sealed class AppController : IDisposable
         RebuildMenu();
     }
 
-    private string TrayTooltip() => _paused
-        ? "VoiceInput — paused"
-        : _session.State is not DictationSessionState.Idle
-            ? $"VoiceInput — {_session.State.ToString().ToLowerInvariant()}"
-            : $"VoiceInput — hold {PttDisplay(_settings.PttKey)} to talk";
+    private string TrayTooltip()
+    {
+        string profile = _settings.ActiveProfile.Name;
+        string state = _paused
+            ? "paused"
+            : _session.State is not DictationSessionState.Idle
+                ? _session.State.ToString().ToLowerInvariant()
+                : _settings.PttMode == PttMode.Toggle
+                    ? $"{PttDisplay(_settings.PttKey)} start/stop"
+                    : $"hold {PttDisplay(_settings.PttKey)}";
+        string tooltip = $"gujiguji · {profile} · {state}";
+        return tooltip.Length <= 63 ? tooltip : tooltip[..63];
+    }
+
+    private void HandleProfileSwitchRequested() =>
+        ActivateProfile(NextProfileId(_settings.ActiveProfileId), showOverlay: true);
+
+    private void ActivateProfile(string profileId, bool showOverlay)
+    {
+        string normalized = InputProfile.NormalizeId(profileId);
+        if (normalized == _settings.ActiveProfileId)
+            return;
+        if (!CanSwitchProfile(_dictating, _session.State))
+        {
+            Notify("Profile not switched", "Finish the current dictation before switching input profiles.");
+            return;
+        }
+
+        _settings.ActiveProfileId = normalized;
+        Persist();
+        ApplyActiveProfile(showOverlay);
+        Log.Write($"Input profile switched to id={normalized} name={_settings.ActiveProfile.Name} " +
+            $"key={_settings.PttKey} mode={_settings.PttMode} overlay={_settings.ActiveProfile.OverlayPosition}.");
+    }
+
+    private void ApplyActiveProfile(bool showOverlay)
+    {
+        InputProfile profile = _settings.ActiveProfile;
+        _hook.SetPttKey(profile.PttKey);
+        if (_overlay is not null)
+        {
+            _overlay.Position = profile.OverlayPosition;
+            if (showOverlay)
+            {
+                string behavior = profile.PttMode == PttMode.Toggle ? "press to start / stop" : "hold to talk";
+                _overlay.ShowProfileChanged(profile.Name, $"{PttDisplay(profile.PttKey)} · {behavior}");
+            }
+        }
+        if (_tray is not null)
+            _tray.Text = TrayTooltip();
+        RebuildMenu();
+    }
 
     private void TogglePause()
     {
@@ -554,15 +700,63 @@ public sealed class AppController : IDisposable
         }
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
-            _paused ? "VoiceInput won't respond to the push-to-talk key until resumed."
-                    : "Push-to-talk is active again.");
+            _paused ? "gujiguji won't respond to the activation key until resumed."
+                    : "Voice input activation is active again.");
         RebuildMenu();
     }
 
     private static string StartupShortcutPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "gujiguji.lnk");
+
+    private static string LegacyStartupShortcutPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "VoiceInput.lnk");
 
-    private static bool IsAutoStartEnabled() => File.Exists(StartupShortcutPath);
+    private static bool IsAutoStartEnabled() =>
+        File.Exists(StartupShortcutPath) || File.Exists(LegacyStartupShortcutPath);
+
+    private static void MigrateLegacyShortcuts()
+    {
+        foreach (Environment.SpecialFolder folder in
+                 new[] { Environment.SpecialFolder.Startup, Environment.SpecialFolder.Programs })
+        {
+            try { MigrateLegacyShortcut(Environment.GetFolderPath(folder)); }
+            catch (Exception ex) { Log.Error("MigrateLegacyShortcut", ex); }
+        }
+    }
+
+    private static void RefreshInstalledUninstaller()
+    {
+        try
+        {
+            string expectedDirectory = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VoiceInput"));
+            string? processDirectory = Path.GetDirectoryName(Environment.ProcessPath);
+            if (processDirectory is null
+                || !Path.GetFullPath(processDirectory).Equals(expectedDirectory, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            using Stream source = typeof(AppController).Assembly
+                .GetManifestResourceStream("gujiguji.install.ps1")
+                ?? throw new InvalidOperationException("Embedded installer script was not found.");
+            using FileStream destination = File.Create(Path.Combine(processDirectory, "uninstall.ps1"));
+            source.CopyTo(destination);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("RefreshInstalledUninstaller", ex);
+        }
+    }
+
+    internal static void MigrateLegacyShortcut(string directory)
+    {
+        string legacy = Path.Combine(directory, "VoiceInput.lnk");
+        if (!File.Exists(legacy)) return;
+
+        string branded = Path.Combine(directory, "gujiguji.lnk");
+        if (File.Exists(branded)) File.Delete(legacy);
+        else File.Move(legacy, branded);
+    }
 
     private void SetAutoStart(bool enabled)
     {
@@ -573,14 +767,16 @@ public sealed class AppController : IDisposable
                 string exe = Environment.ProcessPath!;
                 string dir = Path.GetDirectoryName(exe)!;
                 string ps = $"$s=New-Object -ComObject WScript.Shell; $l=$s.CreateShortcut('{StartupShortcutPath}'); " +
-                            $"$l.TargetPath='{exe}'; $l.WorkingDirectory='{dir}'; $l.Description='VoiceInput'; $l.Save()";
+                            $"$l.TargetPath='{exe}'; $l.WorkingDirectory='{dir}'; $l.Description='gujiguji'; $l.Save()";
                 Process.Start(new ProcessStartInfo("powershell.exe",
                     $"-NoProfile -WindowStyle Hidden -Command \"{ps}\"")
                 { UseShellExecute = false, CreateNoWindow = true })?.WaitForExit(5000);
+                MigrateLegacyShortcut(Environment.GetFolderPath(Environment.SpecialFolder.Startup));
             }
-            else if (File.Exists(StartupShortcutPath))
+            else
             {
-                File.Delete(StartupShortcutPath);
+                if (File.Exists(StartupShortcutPath)) File.Delete(StartupShortcutPath);
+                if (File.Exists(LegacyStartupShortcutPath)) File.Delete(LegacyStartupShortcutPath);
             }
         }
         catch (Exception ex)
@@ -599,16 +795,14 @@ public sealed class AppController : IDisposable
         _ => key,
     };
 
-    private static string EngineDisplay(SpeechEngineKind engine) => engine switch
-    {
-        SpeechEngineKind.Azure => "Azure Speech",
-        SpeechEngineKind.GptTranscribe => "GPT-4o Transcribe",
-        SpeechEngineKind.FunAsr => "FunASR 本地",
-        _ => "Windows 听写",
-    };
-
-    private static string LanguageDisplay(string language) =>
-        AppSettings.SupportedLanguages.FirstOrDefault(item => item.Code == language).Display ?? language;
+    private static string FirstRunRecognitionSummary(AppSettings settings, string modelId) =>
+        settings.Engine switch
+        {
+            SpeechEngineKind.FunAsr => $"FunASR 本地 · {FunAsrModelCatalog.Get(modelId).DisplayName}",
+            SpeechEngineKind.Azure => "Azure Speech 已配置",
+            SpeechEngineKind.GptTranscribe => $"GPT-4o Transcribe · {settings.TranscribeModel}",
+            _ => "Windows 听写 · 准确率较低",
+        };
 
     private void RebuildMenu()
     {
@@ -636,9 +830,25 @@ public sealed class AppController : IDisposable
         var pause = new WinForms.ToolStripMenuItem(_paused ? "Resume listening" : "Pause listening");
         pause.Click += (_, _) => TogglePause();
         menu.Items.Add(pause);
+
+        var profileMenu = new WinForms.ToolStripMenuItem("Input profile");
+        foreach (InputProfile profile in _settings.Profiles)
+        {
+            var item = new WinForms.ToolStripMenuItem(profile.Name)
+            {
+                Checked = profile.Id == _settings.ActiveProfileId,
+            };
+            item.Click += (_, _) => ActivateProfile(profile.Id, showOverlay: true);
+            profileMenu.DropDownItems.Add(item);
+        }
+        menu.Items.Add(profileMenu);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
         var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
+        learnNow.Enabled = LlmRefiner.IsConfigured(_settings);
+        learnNow.ToolTipText = learnNow.Enabled
+            ? "Create refinement rules from locally stored correction samples."
+            : "Configure and enable LLM refinement first.";
         learnNow.Click += (_, _) => LearnFromCorrections();
         menu.Items.Add(learnNow);
 
@@ -659,7 +869,10 @@ public sealed class AppController : IDisposable
         quit.Click += (_, _) => Application.Current.Shutdown();
         menu.Items.Add(quit);
 
-        _tray!.ContextMenuStrip = menu;
+        WinForms.ContextMenuStrip? previous = _tray!.ContextMenuStrip;
+        _tray.ContextMenuStrip = menu;
+        if (previous is not null)
+            _ui.BeginInvoke(DispatcherPriority.Background, new Action(previous.Dispose));
     }
 
     private void OpenFirstRun()
@@ -670,13 +883,26 @@ public sealed class AppController : IDisposable
             return;
         }
 
+        string selectedModelId = FunAsrModelCatalog.NormalizeId(_settings.FunAsrModelId);
+        bool useConfiguredRecognition = _settings.Engine != SpeechEngineKind.FunAsr
+            || selectedModelId != FunAsrModelCatalog.DefaultId;
+        bool recognitionReady = _settings.Engine != SpeechEngineKind.FunAsr
+            || _funAsr.IsInstalled(selectedModelId);
         var window = new FirstRunWindow(
             _settings.PttKey,
             PttDisplay(_settings.PttKey),
-            $"{EngineDisplay(_settings.Engine)} · {LanguageDisplay(_settings.Language)} · " +
-            $"{PttDisplay(_settings.PttKey)} · 模型按需下载",
-            CompleteOnboarding,
-            OpenSettings);
+            _settings.PttMode,
+            new FirstRunWindowActions(
+                recognitionReady,
+                useConfiguredRecognition,
+                FirstRunRecognitionSummary(_settings, selectedModelId),
+                InstallDefaultFunAsrForOnboardingAsync,
+                () => CancelFunAsrInstall(FunAsrModelCatalog.DefaultId),
+                ConfirmWindowsFallback,
+                () => _hook.IsPttGestureChorded,
+                SetOnboardingPttMode,
+                CompleteOnboarding,
+                OpenSettings));
         _firstRunWindow = window;
         window.Closed += (_, _) =>
         {
@@ -687,32 +913,103 @@ public sealed class AppController : IDisposable
         window.Activate();
     }
 
-    private void CompleteOnboarding()
+    private static bool ConfirmWindowsFallback() => MessageBox.Show(
+        "Windows 听写的识别准确率较低，尤其是中文、口音和专业词汇。\n\n" +
+        "建议下载并使用 FunASR 本地模型。仍要改用 Windows 听写吗？",
+        "改用 Windows 听写？",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning) == MessageBoxResult.Yes;
+
+    private void SetOnboardingPttMode(PttMode mode)
     {
-        if (_settings.OnboardingCompleted) return;
+        if (_settings.PttMode == mode)
+            return;
+        _settings.PttMode = mode;
+        Persist();
+        if (_tray is not null)
+            _tray.Text = TrayTooltip();
+        Log.Write($"First-run activation mode changed to {mode}.");
+    }
+
+    private bool CompleteOnboarding(FirstRunCompletionChoice choice)
+    {
+        if (_settings.OnboardingCompleted) return true;
+        (SpeechEngineKind engine, string modelId) = ResolveOnboardingRecognition(
+            choice,
+            _settings.Engine,
+            FunAsrModelCatalog.NormalizeId(_settings.FunAsrModelId));
+        if (engine == SpeechEngineKind.FunAsr && !_funAsr.IsInstalled(modelId))
+            return false;
+
+        _settings.Engine = engine;
+        _settings.FunAsrModelId = modelId;
         _settings.OnboardingCompleted = true;
         Persist();
         RebuildMenu();
-        Log.Write("First-run onboarding completed.");
+        Log.Write($"First-run onboarding completed with engine={_settings.Engine}.");
+        return true;
+    }
+
+    private async Task InstallDefaultFunAsrForOnboardingAsync(
+        Action<FunAsrInstallProgress> reportProgress)
+    {
+        _funAsr.ProgressChanged += reportProgress;
+        try
+        {
+            await InstallFunAsrAsync(FunAsrModelCatalog.DefaultId);
+        }
+        finally
+        {
+            _funAsr.ProgressChanged -= reportProgress;
+        }
     }
 
     private void OpenSettings()
     {
+        FirstRunWindow? firstRun = _firstRunWindow;
+        if (firstRun is { IsVisible: true })
+            firstRun.IsEnabled = false;
+        AppSettings settingsOpenedWith = _settings.Clone();
         var win = new SettingsWindow(_settings, updated =>
         {
+            foreach (string profileId in new[] { InputProfile.Profile1Id, InputProfile.Profile2Id })
+            {
+                InputProfile submittedProfile = updated.GetProfile(profileId);
+                submittedProfile.PttMode = ResolvePttModeAfterSettingsSave(
+                    _settings.GetProfile(profileId).PttMode,
+                    settingsOpenedWith.GetProfile(profileId).PttMode,
+                    submittedProfile.PttMode);
+            }
+            updated.ActiveProfileId = ResolveActiveProfileAfterSettingsSave(
+                _settings.ActiveProfileId,
+                settingsOpenedWith.ActiveProfileId,
+                updated.ActiveProfileId);
+            bool profileChanged = updated.ActiveProfileId != _settings.ActiveProfileId;
             _settings = updated;
             _store.Save(_settings);
-            _hook.SetPttKey(_settings.PttKey);
-            if (_tray is not null) _tray.Text = TrayTooltip();
-            RebuildMenu();
+            ApplyActiveProfile(profileChanged);
         }, _funAsr, new SettingsWindowActions(
             IsAutoStartEnabled,
             SetAutoStart,
             () => CheckForUpdatesAsync(silent: false),
+            PromptAndApplyUpdate,
             () => OpenUri(Log.FilePath),
             InstallFunAsrAsync,
             CancelFunAsrInstall,
-            ActiveFunAsrModelId));
+            ActiveFunAsrModelId,
+            ExtractVocabularyFromCorrectionsAsync));
+        if (firstRun is not null)
+        {
+            win.Owner = firstRun;
+            win.Closed += (_, _) =>
+            {
+                if (!ReferenceEquals(_firstRunWindow, firstRun))
+                    return;
+                firstRun.Close();
+                if (!_settings.OnboardingCompleted)
+                    OpenFirstRun();
+            };
+        }
         win.Show();
         win.Activate();
     }
@@ -815,8 +1112,8 @@ public sealed class AppController : IDisposable
         }
 
         var answer = MessageBox.Show(
-            $"Update to {tag} now?\n\nVoiceInput will download the new version and restart.",
-            "VoiceInput update", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            $"Update to {tag} now?\n\ngujiguji will download the new version and restart.",
+            "gujiguji update", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (answer != MessageBoxResult.Yes) return;
 
         Notify("Updating…", $"Downloading {tag}. The app will restart when it's ready.");
@@ -839,7 +1136,12 @@ public sealed class AppController : IDisposable
 
     private void LearnFromCorrections()
     {
-        var pairs = _corrections.LoadPairs();
+        if (!LlmRefiner.IsConfigured(_settings))
+        {
+            Notify("LLM refinement required", "Configure and enable LLM refinement in Settings first.");
+            return;
+        }
+        var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
         if (pairs.Count < 3)
         {
             Notify("Not enough edits yet", $"{pairs.Count} captured. Keep dictating + editing (needs ~3+, and 'Learn from my edits' on).");
@@ -860,7 +1162,7 @@ public sealed class AppController : IDisposable
             if (string.IsNullOrWhiteSpace(rules)) { Notify("Nothing learned", "No recurring patterns found."); return; }
             var ans = MessageBox.Show(
                 $"Apply these learned correction rules to your refine prompt?\n\n{rules}",
-                "VoiceInput — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                "gujiguji — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (ans == MessageBoxResult.Yes)
             {
                 _settings.LlmLearnedRules = rules;
@@ -869,6 +1171,22 @@ public sealed class AppController : IDisposable
                 Notify("Applied", "Learned rules added to your refine prompt.");
             }
         });
+    }
+
+    private async Task<string[]> ExtractVocabularyFromCorrectionsAsync(AppSettings settings)
+    {
+        if (!LlmRefiner.IsConfigured(settings))
+            throw new InvalidOperationException("Configure and enable LLM refinement first.");
+
+        var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
+        if (pairs.Count < 3)
+            throw new InvalidOperationException(
+                $"Not enough edits yet ({pairs.Count} captured). At least 3 are required.");
+
+        Log.Write($"Vocabulary learning requested sampleCount={pairs.Count}.");
+        string[] candidates = await _refiner.ExtractVocabularyAsync(pairs, settings);
+        Log.Write($"Vocabulary learning completed candidateCount={candidates.Length}.");
+        return candidates;
     }
 
     private void Notify(string title, string message) =>

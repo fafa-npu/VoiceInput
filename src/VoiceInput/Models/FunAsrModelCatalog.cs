@@ -1,3 +1,5 @@
+using System.Runtime.Intrinsics.X86;
+
 namespace VoiceInput.Models;
 
 internal sealed record FunAsrArtifact(string RelativePath, Uri Url, long Size, string Sha256);
@@ -31,11 +33,22 @@ internal static class FunAsrModelCatalog
 
     private static readonly Uri ApacheLicense = new("https://www.apache.org/licenses/LICENSE-2.0");
 
-    public static FunAsrArtifact Runtime { get; } = new(
+    private static readonly FunAsrArtifact GenericRuntime = new(
         "runtime-v0.1.5.zip",
         new("https://github.com/modelscope/FunASR/releases/download/runtime-llamacpp-v0.1.5/funasr-llamacpp-windows-x64.zip"),
         4_663_321,
         "2398192c1dd965a3d6c150833757a55047fa616a8b3561dd4d674259a913afbd");
+
+    private static readonly FunAsrArtifact Avx2Runtime = new(
+        "runtime-v0.1.5-avx2.zip",
+        new("https://github.com/modelscope/FunASR/releases/download/runtime-llamacpp-v0.1.5/funasr-llamacpp-windows-x64-avx2.zip"),
+        4_895_618,
+        "f51482d8acdf8c50a9e8822f1acf074d7fe849f859eb251cf427bca28fb0dbd0");
+
+    public static FunAsrArtifact Runtime { get; } = SelectRuntime(Avx2.IsSupported);
+
+    internal static FunAsrArtifact SelectRuntime(bool avx2Supported) =>
+        avx2Supported ? Avx2Runtime : GenericRuntime;
 
     public static FunAsrArtifact Vad { get; } = new(
         "shared/fsmn-vad.gguf",

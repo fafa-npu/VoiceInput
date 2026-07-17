@@ -1,15 +1,52 @@
-# VoiceInput (Windows)
+> **Install:** Give Copilot this one-line request: `Install gujiguji on this Windows PC from https://github.com/fafa-npu/VoiceInput. Preserve my existing settings and downloaded models, use the repository's supported installation flow, resolve PowerShell execution-policy and startup-shortcut permission issues, verify any downloaded release against its GitHub SHA-256 digest (or build from source), launch the app, and ask me only when Windows requires a security confirmation.`
 
-A system-tray, hold-to-talk voice input method for Windows. Hold a key, speak, and release:
-VoiceInput transcribes the recording and inserts it only if the original window and input control
-still have focus.
+# gujiguji (Windows)
+
+A system-tray voice input method for Windows. Hold a key while speaking, or press once to start
+and again to stop. gujiguji transcribes the recording and inserts it only if the original window
+and input control still have focus.
 
 Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
 
+## Install
+
+The recommended installation is to give Copilot the first-line request above. Copilot can inspect
+the repository, choose the supported release or source-build path, handle PowerShell and shortcut
+permissions, preserve an existing installation, and stop only for Windows security confirmations.
+
+Manual one-line install in PowerShell:
+
+```powershell
+$s="$env:TEMP\vi.ps1"; iwr https://github.com/fafa-npu/VoiceInput/raw/main/scripts/install.ps1 -OutFile $s; powershell -ExecutionPolicy Bypass -File $s
+```
+
+The installer verifies the official GitHub Release asset against the SHA-256 digest returned by
+GitHub before installing it to `%LOCALAPPDATA%\VoiceInput`, creating Start Menu and auto-start
+shortcuts, and launching it. Reinstalling preserves `%APPDATA%\VoiceInput` settings and downloaded
+models under `%LOCALAPPDATA%\VoiceInput\FunASR`. Current release executables are not Authenticode
+signed, so Windows may still show a security confirmation.
+
+You can also download `VoiceInput.exe` from
+[Releases](https://github.com/fafa-npu/VoiceInput/releases) and run it directly. It is self-contained;
+the .NET runtime is not required.
+
+On first launch, the guide offers to download SenseVoiceSmall, the CPU runtime, and VAD (about
+**260.8 MB** total). The download is resumable. Windows dictation remains available as a
+lower-accuracy fallback.
+
+Uninstall:
+
+```powershell
+powershell -File "$env:LOCALAPPDATA\VoiceInput\uninstall.ps1" -Uninstall
+```
+
+This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correction samples). Add
+`-KeepUserData` to retain it.
+
 ## What makes it different
 
-VoiceInput works with Windows dictation by default. An optional **speech-aware LLM refinement
-layer** can be configured for:
+gujiguji defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
+optional **speech-aware LLM refinement layer** can be configured for:
 
 - **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
   errors speech recognition actually makes — Chinese homophones / near-homophones, and tech terms
@@ -25,24 +62,30 @@ layer** can be configured for:
 
 ## Features
 
-- **Hold-to-talk.** Hold the push-to-talk key (default **Right Ctrl**, rebindable) to record;
-  release to transcribe and inject. Chord-aware (Right-Ctrl+C still works); a watchdog recovers a
-  missed key-up (UAC / lock screen).
+- **Two input profiles.** **Desktop** defaults to Right Ctrl, hold to talk, and a bottom overlay;
+  **Mobile** defaults to Left Ctrl, press to start/stop, and a top overlay. Both names, keys,
+  activation behaviors, and overlay positions are configurable. `Alt+Shift+G` switches profiles
+  while idle, and the tray menu provides direct selection. The last active profile is restored.
+- **Two activation behaviors.** Hold the active key and release to transcribe, or press once to
+  listen and again to transcribe. Both are chord-aware, so shortcuts such as Right-Ctrl+C still
+  work; a watchdog recovers a missed key-up after UAC, lock screen, or another hook interruption.
   > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
   > key is used.
-- **Guided first run.** A two-step setup window teaches the real focused-text-box workflow, then
-  shows where VoiceInput stays in the system tray and where optional engines and models are configured.
+- **Guided first run.** The setup window recommends and downloads SenseVoiceSmall with visible
+  package and byte progress, then teaches the real focused-text-box workflow. Users can explicitly
+  fall back to Windows dictation after an accuracy warning.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Four speech engines:** **Windows dictation** (may use Microsoft's online speech service),
-  **Azure Speech** (streaming), **gpt-4o-transcribe** via **Azure AI Foundry** (batch), and
-  **FunASR** with app-managed local GGUF models (batch). Azure Speech and gpt-4o-transcribe each
-  support **account-key** or **Microsoft Entra ID** auth.
+- **Four speech engines:** **FunASR** with app-managed local GGUF models (the new-user default,
+  batch), **Windows dictation** (lower accuracy; may use Microsoft's online speech service),
+  **Azure Speech** (streaming), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch). Azure
+  Speech and gpt-4o-transcribe each support **account-key** or **Microsoft Entra ID** auth.
 - **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
   minute between dictations, so back-to-back dictation is instant and the first words aren't lost to
   device cold-start. The mic is fully released when idle or paused.
-- **Capsule overlay** at the bottom of the active monitor (multi-monitor aware) with a live,
-  RMS-driven waveform and the running transcript; grows smoothly and shows the latest words.
-- **Target-safe injection.** VoiceInput records the original window, process, and focused control,
+- **Capsule overlay** at the configured top or bottom of the active monitor (multi-monitor aware)
+  with a live, RMS-driven waveform and the running transcript; grows smoothly and shows the latest
+  words. Switching profiles briefly displays the newly active profile.
+- **Target-safe injection.** gujiguji records the original window, process, and focused control,
   refuses to type after focus changes, and checks every `SendInput` result. Uninserted text is
   preserved, copied to the clipboard, and available for retry from the tray. Windows security
   boundaries (for example an elevated app) can still block injection.
@@ -53,39 +96,18 @@ layer** can be configured for:
 
 | Action                   | How                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------ |
-| **Talk**                 | Hold **Right Ctrl** (rebindable: tray → Push-to-talk key), speak, release            |
-| **Start**                | Start Menu → **VoiceInput**, or it auto-starts at login                              |
+| **Talk**                 | Use the activation key and behavior configured for the active Profile                |
+| **Switch profile**       | Press **Alt+Shift+G**, or select a Profile from the tray                              |
+| **Start**                | Start Menu → **gujiguji**, or it auto-starts at login                               |
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
-| **Context-aware refine** | Tray → **Use surrounding context (UIA)** (off by default; sends app text to the LLM) |
-| **Setup**                | Tray → **Settings…** (speech, local models, refinement, and app settings)             |
-
-## Install
-
-**One line, no clone** (downloads the latest release exe, installs to `%LOCALAPPDATA%`, adds Start
-Menu + auto-start, and launches) — in PowerShell:
-
-```powershell
-$s="$env:TEMP\vi.ps1"; iwr https://github.com/fafa-npu/VoiceInput/raw/main/scripts/install.ps1 -OutFile $s; powershell -ExecutionPolicy Bypass -File $s
-```
-
-Or just download `VoiceInput.exe` from the
-[Releases](https://github.com/fafa-npu/VoiceInput/releases) page and double-click it
-(it's self-contained — no .NET runtime needed).
-
-Uninstall:
-
-```powershell
-powershell -File "$env:LOCALAPPDATA\VoiceInput\uninstall.ps1" -Uninstall
-```
-
-This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correction samples). Add
-`-KeepUserData` to retain it.
+| **Context-aware refine** | Settings → App (off by default; sends app text only to your configured LLM)           |
+| **Setup**                | Tray → **Settings…**                                                                 |
 
 ## Local FunASR
 
-Open **Settings → FunASR** to download models on demand. **SenseVoiceSmall** is the default local
-model selection, but nothing is downloaded until you choose to install it.
+On first launch, the guide selects **SenseVoiceSmall** and offers to download it directly. After
+setup, open **Settings → Model Selection** to install, switch, or remove local models on demand.
 
 | Model | Download | Languages | Intended use |
 | --- | ---: | --- | --- |
@@ -106,9 +128,11 @@ this release link to the [Apache 2.0 license](https://www.apache.org/licenses/LI
 
 ## Configuration
 
-Tray → **Settings…** opens the Setup Hub. Speech contains engine and cloud authentication settings;
-FunASR manages local models; Refinement contains the OpenAI-compatible Base URL, key, model, and
-custom prompt; App contains language, push-to-talk, privacy, startup, update, and logging controls.
+Tray → **Settings…** opens the Setup Hub. **Model Selection** contains speech engines, cloud
+authentication, and local-model downloads; **Profiles** configures the two activation and overlay
+presets; **Vocabulary** manages recognition terms; **Refinement** contains the OpenAI-compatible
+Base URL, key, model, and custom prompt; **App** contains language, privacy, startup, update, and
+logging controls.
 Secret fields are DPAPI-encrypted per Windows user in `%APPDATA%\VoiceInput\settings.json`.
 
 ## Build (developers)
@@ -124,14 +148,16 @@ dotnet test tests/VoiceInput.Tests/VoiceInput.Tests.csproj
 dotnet build src/VoiceInput/VoiceInput.csproj -p:EnableWindowsTargeting=true
 ```
 
-The app shows its version in the tray and offers **Update to vX.Y.Z…** when a newer release exists.
-Updates are user-initiated, Authenticode-verified against the publisher certificate embedded at
-build time, atomically replaced, and rolled back if the new process does not stay running.
+The app shows its version in Settings and offers **Update to vX.Y.Z…** when a newer release exists.
+Updates are user-initiated, verified against a pinned Authenticode publisher when signed or the
+GitHub Release SHA-256 digest otherwise, atomically replaced, and rolled back if the new process
+does not stay running.
 
 ## Notes
 
-- **Windows on-device dictation** is web-service-backed: it may need _Online speech recognition_ on
-  and the zh-CN speech pack installed. For reliable zh-CN, use Azure Speech.
+- **Windows dictation** generally has lower recognition accuracy than FunASR, especially for
+  Chinese, accents, and technical vocabulary. It may also need _Online speech recognition_ and the
+  matching Windows speech pack. Prefer FunASR for local use or Azure Speech for streaming.
 - **gpt-4o-transcribe** is batch: it transcribes after you release (~0.5–2 s), so there are no live
   partials — but accuracy is highest (zh-CN homophones, tech terms). Needs an Azure AI Foundry
   resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).
@@ -139,7 +165,7 @@ build time, atomically replaced, and rolled back if the new process does not sta
   selected model, recording length, and the local CPU; no cloud fallback occurs after a local error.
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
-- UI Automation context is untrusted input. VoiceInput constrains refined output length, rejects
+- UI Automation context is untrusted input. gujiguji constrains refined output length, rejects
   control characters and large semantic drift, and falls back to the original transcript.
 - Edit learning is off by default, bound to the original control for two minutes, capped at 100
   samples, and encrypted per Windows user with DPAPI.

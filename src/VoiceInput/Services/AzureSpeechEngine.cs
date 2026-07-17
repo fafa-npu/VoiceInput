@@ -4,6 +4,8 @@ using Microsoft.CognitiveServices.Speech.Audio;
 
 namespace VoiceInput.Services;
 
+internal readonly record struct AzureVocabularyApplyResult(int AppliedCount, string? ExceptionType);
+
 /// <summary>
 /// Streaming recognition via the Azure Speech SDK. Consumes 16 kHz/16-bit/mono PCM fed from the
 /// app's WASAPI capture through a push stream (<see cref="NeedsAudioFeed"/> = true).
@@ -11,18 +13,33 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class AzureSpeechEngine : ISpeechEngine
 {
-    private readonly Func<SpeechConfig> _configFactory;
+    internal const int MaxVocabularyPhrases = 500;
 
-    private AzureSpeechEngine(Func<SpeechConfig> configFactory) => _configFactory = configFactory;
+    private readonly Func<SpeechConfig> _configFactory;
+    private readonly IReadOnlyList<string> _vocabularyEntries;
+
+    private AzureSpeechEngine(
+        Func<SpeechConfig> configFactory,
+        IReadOnlyList<string>? vocabularyEntries = null)
+    {
+        _configFactory = configFactory;
+        _vocabularyEntries = vocabularyEntries ?? Array.Empty<string>();
+    }
 
     /// <summary>Account-key (local auth) engine.</summary>
-    public static AzureSpeechEngine ForKey(string subscriptionKey, string region) =>
-        new(() => SpeechConfig.FromSubscription(subscriptionKey, region));
+    public static AzureSpeechEngine ForKey(
+        string subscriptionKey,
+        string region,
+        IReadOnlyList<string>? vocabularyEntries = null) =>
+        new(() => SpeechConfig.FromSubscription(subscriptionKey, region), vocabularyEntries);
 
     /// <summary>Microsoft Entra ID engine. <paramref name="endpoint"/> is the resource's custom-domain
     /// endpoint; the SDK acquires and auto-refreshes tokens via <paramref name="credential"/>.</summary>
-    public static AzureSpeechEngine ForEntra(string endpoint, TokenCredential credential) =>
-        new(() => SpeechConfig.FromEndpoint(new Uri(endpoint), credential));
+    public static AzureSpeechEngine ForEntra(
+        string endpoint,
+        TokenCredential credential,
+        IReadOnlyList<string>? vocabularyEntries = null) =>
+        new(() => SpeechConfig.FromEndpoint(new Uri(endpoint), credential), vocabularyEntries);
 
     public bool NeedsAudioFeed => true;
     public event Action<string>? Partial;
@@ -42,6 +59,22 @@ public sealed class AzureSpeechEngine : ISpeechEngine
         _push = AudioInputStream.CreatePushStream(AudioStreamFormat.GetWaveFormatPCM(AudioCapture.TargetSampleRate, 16, 1));
         _audioConfig = AudioConfig.FromStreamInput(_push);
         _recognizer = new SpeechRecognizer(config, _audioConfig);
+
+        if (_vocabularyEntries.Count > 0)
+        {
+            AzureVocabularyApplyResult result;
+            try
+            {
+                PhraseListGrammar grammar = PhraseListGrammar.FromRecognizer(_recognizer);
+                result = AddVocabularyPhrases(_vocabularyEntries, grammar.AddPhrase);
+            }
+            catch (Exception ex)
+            {
+                result = new(0, ex.GetType().Name);
+            }
+
+            Log.Write(FormatVocabularyLog(_vocabularyEntries.Count, result));
+        }
 
         _recognizer.Recognizing += (_, e) =>
         {
@@ -65,6 +98,34 @@ public sealed class AzureSpeechEngine : ISpeechEngine
 
         await _recognizer.StartContinuousRecognitionAsync();
     }
+
+    internal static AzureVocabularyApplyResult AddVocabularyPhrases(
+        IReadOnlyList<string> entries,
+        Action<string> addPhrase)
+    {
+        int applied = 0;
+        try
+        {
+            int count = Math.Min(entries.Count, MaxVocabularyPhrases);
+            for (int index = 0; index < count; index++)
+            {
+                addPhrase(entries[index]);
+                applied++;
+            }
+            return new(applied, null);
+        }
+        catch (Exception ex)
+        {
+            return new(applied, ex.GetType().Name);
+        }
+    }
+
+    internal static string FormatVocabularyLog(int requested, AzureVocabularyApplyResult result) =>
+        result.ExceptionType is not null
+            ? $"WARN Vocabulary azure-phrase-list requested={requested} applied={result.AppliedCount} exceptionType={result.ExceptionType}"
+            : requested > MaxVocabularyPhrases
+                ? $"Vocabulary azure-phrase-list requested={requested} applied={result.AppliedCount} limit={MaxVocabularyPhrases}"
+                : $"Vocabulary azure-phrase-list requested={requested} applied={result.AppliedCount}";
 
     private static SpeechFault MapFault(CancellationErrorCode code, string detail) => code switch
     {

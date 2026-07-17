@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Azure.Core;
+using VoiceInput.Models;
 
 namespace VoiceInput.Services;
 
@@ -15,6 +16,10 @@ namespace VoiceInput.Services;
 /// </summary>
 public sealed class OpenAiTranscribeEngine : ISpeechEngine
 {
+    // 0.5 s of 16 kHz 16-bit mono PCM; shorter WAVs are rejected by GPT transcription.
+    internal const int MinimumPcmBytes = AudioCapture.TargetSampleRate;
+    private const int EnergyWindowSamples = AudioCapture.TargetSampleRate / 50;
+    private const int MinimumAudibleAmplitude = 131; // 0.004 of full scale, matching the UI silence threshold.
     private const string Scope = "https://cognitiveservices.azure.com/.default";
     // ponytail: bump if Foundry rejects gpt-4o-transcribe at this version.
     private const string ApiVersion = "2025-03-01-preview";
@@ -24,6 +29,8 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     private readonly string _url;
     private readonly Func<HttpRequestMessage, CancellationToken, Task> _applyAuth;
+    private readonly IReadOnlyList<string> _vocabularyEntries;
+    private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _send;
     private readonly MemoryStream _buffer = new();
     private readonly object _lock = new();
     private string _language = string.Empty;
@@ -35,27 +42,41 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     /// can notify the user and re-authenticate in the background, off the dictation lock.</summary>
     public event Action? AuthExpired;
 
-    internal OpenAiTranscribeEngine(string url, Func<HttpRequestMessage, CancellationToken, Task> applyAuth)
+    internal OpenAiTranscribeEngine(
+        string url,
+        Func<HttpRequestMessage, CancellationToken, Task> applyAuth,
+        IReadOnlyList<string>? vocabularyEntries = null,
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? send = null)
     {
         _url = url;
         _applyAuth = applyAuth;
+        _vocabularyEntries = vocabularyEntries ?? Array.Empty<string>();
+        _send = send ?? ((request, cancellationToken) => Http.SendAsync(request, cancellationToken));
     }
 
     /// <summary>Microsoft Entra ID auth (Bearer token). The SDK acquires and caches the token via the credential.</summary>
-    public static OpenAiTranscribeEngine ForEntra(string endpoint, string deployment, TokenCredential credential) =>
+    public static OpenAiTranscribeEngine ForEntra(
+        string endpoint,
+        string deployment,
+        TokenCredential credential,
+        IReadOnlyList<string>? vocabularyEntries = null) =>
         new(BuildUrl(endpoint, deployment), async (req, ct) =>
         {
             var token = await credential.GetTokenAsync(new TokenRequestContext(new[] { Scope }), ct);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
-        });
+        }, vocabularyEntries);
 
     /// <summary>Account-key auth (the Azure OpenAI <c>api-key</c> header).</summary>
-    public static OpenAiTranscribeEngine ForKey(string endpoint, string deployment, string apiKey) =>
+    public static OpenAiTranscribeEngine ForKey(
+        string endpoint,
+        string deployment,
+        string apiKey,
+        IReadOnlyList<string>? vocabularyEntries = null) =>
         new(BuildUrl(endpoint, deployment), (req, _) =>
         {
             req.Headers.Add("api-key", apiKey);
             return Task.CompletedTask;
-        });
+        }, vocabularyEntries);
 
     private static string BuildUrl(string endpoint, string deployment) =>
         endpoint.TrimEnd('/') + "/openai/deployments/" + deployment + "/audio/transcriptions?api-version=" + ApiVersion;
@@ -106,7 +127,18 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
         byte[] pcm;
         lock (_lock) { pcm = _buffer.ToArray(); }
-        if (pcm.Length == 0) return;
+        if (pcm.Length < MinimumPcmBytes)
+        {
+            Fault?.Invoke(new(
+                SpeechFaultKind.Unknown,
+                "Recording was too short to transcribe. Speak for at least half a second and try again."));
+            return;
+        }
+        if (!HasAudibleSignal(pcm))
+        {
+            Log.Write("OpenAiTranscribeEngine: silent recording skipped before transcription.");
+            return;
+        }
 
         var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
         lock (_lock)
@@ -125,6 +157,9 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
             form.Add(file, "file", "audio.wav");
             form.Add(new StringContent("json"), "response_format");
             if (!string.IsNullOrEmpty(_language)) form.Add(new StringContent(_language), "language");
+            bool promptIncluded = _vocabularyEntries.Count > 0;
+            if (promptIncluded)
+                form.Add(new StringContent(RecognitionVocabulary.BuildPrompt(_vocabularyEntries)), "prompt");
 
             using var req = new HttpRequestMessage(HttpMethod.Post, _url) { Content = form };
 
@@ -150,14 +185,16 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
                 return;
             }
 
-            using var resp = await Http.SendAsync(req, requestCts.Token);
+            Log.Write($"Vocabulary gpt-request mode=Prompt termCount={_vocabularyEntries.Count} promptIncluded={promptIncluded}");
+            using var resp = await _send(req, requestCts.Token);
             string json = await resp.Content.ReadAsStringAsync(requestCts.Token);
             if (!resp.IsSuccessStatusCode)
             {
-                Log.Write($"OpenAiTranscribeEngine HTTP {(int)resp.StatusCode}: {Truncate(json, 300)}");
+                string detail = FormatHttpFailure(resp, json);
+                Log.Write($"OpenAiTranscribeEngine HTTP {detail}");
                 Fault?.Invoke(resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests
-                    ? new(SpeechFaultKind.Quota, "Transcription is rate-limited or out of quota.", Truncate(json, 300))
-                    : new(SpeechFaultKind.Service, $"Transcription service returned HTTP {(int)resp.StatusCode}.", Truncate(json, 300)));
+                    ? new(SpeechFaultKind.Quota, "Transcription is rate-limited or out of quota.", detail)
+                    : new(SpeechFaultKind.Service, $"Transcription service returned HTTP {(int)resp.StatusCode}.", detail));
                 return;
             }
 
@@ -199,6 +236,69 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     private static string TwoLetter(string lang) =>
         string.IsNullOrEmpty(lang) ? string.Empty : lang.Split('-')[0].ToLowerInvariant();
 
-    private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+    private static bool HasAudibleSignal(byte[] pcm)
+    {
+        const long minimumEnergy = (long)MinimumAudibleAmplitude * MinimumAudibleAmplitude;
+        for (int start = 0; start + 1 < pcm.Length; start += EnergyWindowSamples * 2)
+        {
+            int end = Math.Min(start + EnergyWindowSamples * 2, pcm.Length);
+            long energy = 0;
+            int samples = 0;
+            for (int offset = start; offset + 1 < end; offset += 2)
+            {
+                short sample = (short)(pcm[offset] | (pcm[offset + 1] << 8));
+                energy += (long)sample * sample;
+                samples++;
+            }
+            if (energy >= minimumEnergy * samples)
+                return true;
+        }
+        return false;
+    }
+
+    internal static string FormatHttpFailure(HttpResponseMessage response, string body)
+    {
+        string detail = $"status={(int)response.StatusCode}";
+        string? code = SafeErrorCode(body);
+        if (code is not null) detail += $" code={code}";
+
+        string? requestId = SafeHeader(response, "x-request-id")
+            ?? SafeHeader(response, "apim-request-id")
+            ?? SafeHeader(response, "x-ms-request-id")
+            ?? SafeHeader(response, "request-id");
+        if (requestId is not null) detail += $" requestId={requestId}";
+        return detail;
+    }
+
+    private static string? SafeErrorCode(string body)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("error", out JsonElement error) &&
+                error.ValueKind == JsonValueKind.Object &&
+                error.TryGetProperty("code", out JsonElement code) &&
+                code.ValueKind == JsonValueKind.String &&
+                IsSafeIdentifier(code.GetString()))
+            {
+                return code.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return null;
+    }
+
+    private static string? SafeHeader(HttpResponseMessage response, string name)
+    {
+        if (!response.Headers.TryGetValues(name, out IEnumerable<string>? values)) return null;
+        return values.FirstOrDefault(IsSafeIdentifier);
+    }
+
+    private static bool IsSafeIdentifier(string? value) =>
+        value is { Length: > 0 and <= 128 } && value.All(c =>
+            c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-');
 
 }

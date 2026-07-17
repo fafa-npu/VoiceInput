@@ -1,7 +1,7 @@
 <Window x:Class="VoiceInput.Views.FirstRunWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VoiceInput 快速设置"
+        Title="gujiguji 快速设置"
         Width="900" Height="650" MinWidth="720" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize"
@@ -11,7 +11,7 @@
         FontSize="13"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
-        AutomationProperties.Name="VoiceInput 首次使用引导"
+        AutomationProperties.Name="gujiguji 首次使用引导"
         PreviewKeyDown="OnPreviewKeyDown"
         PreviewKeyUp="OnPreviewKeyUp">
     <Window.Resources>
@@ -132,13 +132,17 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <Border Width="30" Height="30" CornerRadius="6" Background="{StaticResource AccentBrush}">
-                    <TextBlock HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               FontFamily="Segoe MDL2 Assets"
-                               FontSize="15"
-                               Foreground="White"
-                               Text="&#xE720;" />
+                <Border Width="30" Height="30" CornerRadius="6" Background="#DFFF52">
+                    <Viewbox Width="22" Height="22">
+                        <Canvas Width="64" Height="64">
+                            <Line X1="13" Y1="32" X2="18" Y2="32" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Line X1="22" Y1="24" X2="22" Y2="40" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Line X1="30" Y1="16" X2="30" Y2="48" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Line X1="38" Y1="23" X2="38" Y2="41" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Line X1="46" Y1="30" X2="46" Y2="34" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                            <Rectangle Canvas.Left="50" Canvas.Top="18" Width="6" Height="28" RadiusX="3" RadiusY="3" Fill="#237A52" />
+                        </Canvas>
+                    </Viewbox>
                 </Border>
                 <TextBlock Margin="10,0,0,0"
                            VerticalAlignment="Center"
@@ -146,7 +150,7 @@
                            FontSize="15"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource TextBrush}"
-                           Text="VoiceInput" />
+                           Text="gujiguji" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Ellipse Width="8" Height="8" Margin="0,0,7,0" Fill="#3CA270" />
@@ -180,9 +184,11 @@
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Focusable="False"
-                      AutomationProperties.Name="VoiceInput 语音输入演练">
+                      AutomationProperties.Name="gujiguji 语音输入演练">
             <Grid Margin="30,16,30,14">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -197,11 +203,127 @@
                     <TextBlock Margin="0,6,0,0"
                                FontSize="14"
                                Foreground="{StaticResource MutedTextBrush}"
-                               Text="VoiceInput 会把你说的话输入到当前有光标的文本框。先在下面的记事本中试一次。"
+                               Text="gujiguji 会把你说的话输入到当前有光标的文本框。先在下面的记事本中试一次。"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
-                <Grid Grid.Row="1" Margin="0,12,0,0">
+                <Border x:Name="LocalModelSetupPanel"
+                        Grid.Row="1"
+                        Margin="0,12,0,0"
+                        Padding="14,11"
+                        Background="{StaticResource AccentSoftBrush}"
+                        BorderBrush="#ACCCC3"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        AutomationProperties.Name="FunASR 本地模型设置">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="38" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="32" Height="32" CornerRadius="6" Background="{StaticResource AccentBrush}">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="15"
+                                       Foreground="White"
+                                       Text="&#xE9D9;" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="10,0,18,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="LocalModelTitleText"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextBrush}"
+                                       Text="使用本地 FunASR（推荐）" />
+                            <TextBlock x:Name="LocalModelStatusText"
+                                       Margin="0,3,0,0"
+                                       FontSize="11"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <ProgressBar x:Name="LocalModelProgressBar"
+                                         Height="6"
+                                         Margin="0,8,0,0"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Visibility="Collapsed"
+                                         AutomationProperties.Name="本地模型安装进度" />
+                            <TextBlock x:Name="LocalModelProgressText"
+                                       Margin="0,4,0,0"
+                                       FontSize="10"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Visibility="Collapsed"
+                                       AutomationProperties.LiveSetting="Polite" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="CancelLocalModelInstallButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Content="取消"
+                                    Visibility="Collapsed"
+                                    Click="OnCancelLocalModelInstallClick" />
+                            <Button x:Name="InstallLocalModelButton"
+                                    MinWidth="116"
+                                    Margin="8,0,0,0"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Content="下载并使用"
+                                    AutomationProperties.Name="下载并使用 SenseVoiceSmall 本地模型"
+                                    Click="OnInstallLocalModelClick" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="ActivationModePanel"
+                        Grid.Row="2"
+                        Margin="0,10,0,0"
+                        Padding="13,10"
+                        Background="#F8FAFB"
+                        BorderBrush="{StaticResource LineBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        AutomationProperties.Name="选择说话方式">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                       Text="选择说话方式" />
+                            <TextBlock x:Name="LocalModelInlineStatusText"
+                                       Margin="0,3,12,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                       Text="设置后立即在下方试用" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <RadioButton x:Name="HoldModeRadio"
+                                     Grid.Column="1"
+                                     GroupName="OnboardingPttMode"
+                                     Padding="6,2"
+                                     VerticalAlignment="Center"
+                                     Checked="OnPttModeChanged">
+                            <StackPanel Margin="5,0,10,0">
+                                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                           Text="按住说话" />
+                                <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                           Text="按住时聆听，松开后输入" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="ToggleModeRadio"
+                                     Grid.Column="2"
+                                     GroupName="OnboardingPttMode"
+                                     Padding="6,2"
+                                     VerticalAlignment="Center"
+                                     Checked="OnPttModeChanged">
+                            <StackPanel Margin="5,0,0,0">
+                                <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                           Text="按一下开始 / 再按一下结束" TextWrapping="Wrap" />
+                                <TextBlock Margin="0,2,0,0" FontSize="10" Foreground="{StaticResource MutedTextBrush}"
+                                           Text="无需一直按住按键" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </RadioButton>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="3" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="210" />
                         <ColumnDefinition Width="24" />
@@ -218,8 +340,9 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" Background="{StaticResource BlueBrush}">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="FocusStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        Background="{StaticResource BlueBrush}">
+                                    <TextBlock x:Name="FocusStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="White" Text="1" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
@@ -237,15 +360,17 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" BorderBrush="#AEBAC0" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="TalkStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        BorderBrush="#AEBAC0" BorderThickness="1">
+                                    <TextBlock x:Name="TalkStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="#65747C" Text="2" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
                                     <TextBlock x:Name="PracticePttStepText"
                                                FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" TextWrapping="Wrap" />
-                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
-                                               Text="按住时 VoiceInput 才会聆听" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="PracticePttStepDetailText"
+                                               Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                               Text="按住时 gujiguji 才会聆听" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -256,14 +381,17 @@
                                     <ColumnDefinition Width="30" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Border Width="27" Height="27" CornerRadius="14" BorderBrush="#AEBAC0" BorderThickness="1">
-                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <Border x:Name="ReleaseStepBadge" Width="27" Height="27" CornerRadius="14"
+                                        BorderBrush="#AEBAC0" BorderThickness="1">
+                                    <TextBlock x:Name="ReleaseStepNumberText" HorizontalAlignment="Center" VerticalAlignment="Center"
                                                FontSize="12" FontWeight="Bold" Foreground="#65747C" Text="3" />
                                 </Border>
                                 <StackPanel Grid.Column="1" Margin="9,0,0,0">
-                                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                                    <TextBlock x:Name="PracticeReleaseStepText"
+                                               FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
                                                Text="松开即可输入" />
-                                    <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                    <TextBlock x:Name="PracticeReleaseStepDetailText"
+                                               Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
                                                Text="文字会回到刚才的光标位置" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
@@ -401,7 +529,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Border Grid.Row="2"
+                <Border Grid.Row="4"
                         Margin="0,12,0,0"
                         Padding="0,11"
                         BorderBrush="{StaticResource LineBrush}"
@@ -419,7 +547,7 @@
                         </Border>
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
-                                       Text="默认设置已就绪" />
+                                       Text="默认使用本地语音识别" />
                             <TextBlock x:Name="CurrentSummaryText" Margin="0,2,14,0" FontSize="11"
                                        Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
                         </StackPanel>
@@ -441,7 +569,7 @@
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Focusable="False"
-                      AutomationProperties.Name="VoiceInput 设置完成页面">
+                      AutomationProperties.Name="gujiguji 设置完成页面">
             <Grid Margin="34,18,34,14">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -464,7 +592,7 @@
                                    FontSize="27"
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource TextBrush}"
-                                   Text="VoiceInput 已准备好" />
+                                   Text="gujiguji 已准备好" />
                         <TextBlock x:Name="CompletionSummaryText"
                                    Margin="0,5,0,0"
                                    FontSize="13"
@@ -473,7 +601,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid Grid.Row="1" Margin="0,12,0,0" AutomationProperties.Name="VoiceInput 使用步骤回顾">
+                <Grid Grid.Row="1" Margin="0,12,0,0" AutomationProperties.Name="gujiguji 使用步骤回顾">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="26" />
@@ -498,7 +626,8 @@
                                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10"
                                            FontWeight="Bold" Foreground="{StaticResource BlueBrush}" Text="2" />
                             </Border>
-                            <TextBlock Margin="7,0,0,0" VerticalAlignment="Center" FontSize="11" Text="按住说话" />
+                            <TextBlock x:Name="CompletionTalkStepText" Margin="7,0,0,0"
+                                       VerticalAlignment="Center" FontSize="11" Text="按住说话" />
                         </StackPanel>
                     </Border>
                     <TextBlock Grid.Column="3" HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -509,7 +638,8 @@
                                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10"
                                            FontWeight="Bold" Foreground="{StaticResource BlueBrush}" Text="3" />
                             </Border>
-                            <TextBlock Margin="7,0,0,0" VerticalAlignment="Center" FontSize="11" Text="松开输入" />
+                            <TextBlock x:Name="CompletionSubmitStepText" Margin="7,0,0,0"
+                                       VerticalAlignment="Center" FontSize="11" Text="松开输入" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -529,10 +659,10 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Margin="0,4,18,0" VerticalAlignment="Top">
                                 <TextBlock FontFamily="Bahnschrift, Segoe UI" FontSize="16" FontWeight="SemiBold"
-                                           Foreground="{StaticResource TextBrush}" Text="关闭引导后，VoiceInput 仍会在系统托盘运行"
+                                           Foreground="{StaticResource TextBrush}" Text="关闭引导后，gujiguji 仍会在系统托盘运行"
                                            TextWrapping="Wrap" />
                                 <TextBlock Margin="0,6,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}"
-                                           Text="需要暂停、修改设置或退出时，在任务栏右下角找到 VoiceInput 图标并打开菜单。"
+                                           Text="需要暂停、修改设置或退出时，在任务栏右下角找到 gujiguji 图标并打开菜单。"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                             <Grid x:Name="TrayMenuMock" Grid.Column="1" Height="106"
@@ -540,8 +670,19 @@
                                 <Border Height="38" VerticalAlignment="Bottom" Background="#202326">
                                     <StackPanel Margin="0,0,10,0" Orientation="Horizontal" HorizontalAlignment="Right">
                                         <TextBlock Margin="0,0,13,0" VerticalAlignment="Center" FontSize="16" Foreground="#F3F6F7" Text="&#x2303;" />
-                                        <TextBlock Margin="0,0,13,0" VerticalAlignment="Center" FontFamily="Segoe MDL2 Assets"
-                                                   FontSize="16" Foreground="#71D0BD" Text="&#xE720;" />
+                                        <Border Width="18" Height="18" Margin="0,0,13,0" VerticalAlignment="Center"
+                                                CornerRadius="4" Background="#DFFF52">
+                                            <Viewbox Width="14" Height="14">
+                                                <Canvas Width="64" Height="64">
+                                                    <Line X1="13" Y1="32" X2="18" Y2="32" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                                    <Line X1="22" Y1="24" X2="22" Y2="40" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                                    <Line X1="30" Y1="16" X2="30" Y2="48" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                                    <Line X1="38" Y1="23" X2="38" Y2="41" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                                    <Line X1="46" Y1="30" X2="46" Y2="34" Stroke="#171A1D" StrokeThickness="5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                                    <Rectangle Canvas.Left="50" Canvas.Top="18" Width="6" Height="28" RadiusX="3" RadiusY="3" Fill="#237A52" />
+                                                </Canvas>
+                                            </Viewbox>
+                                        </Border>
                                         <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="#DFE5E7" Text="15:42&#x0a;7/15/2026"
                                                    TextAlignment="Right" />
                                     </StackPanel>
@@ -551,7 +692,7 @@
                                         Padding="6" Background="White" BorderBrush="#B9C1C5" BorderThickness="1"
                                         Panel.ZIndex="2">
                                     <StackPanel>
-                                        <TextBlock Padding="7,3" FontSize="10" FontWeight="SemiBold" Text="VoiceInput" />
+                                        <TextBlock Padding="7,3" FontSize="10" FontWeight="SemiBold" Text="gujiguji" />
                                         <TextBlock Padding="7,3" FontSize="10" Text="暂停聆听" />
                                         <TextBlock Padding="7,3" Background="{StaticResource BlueSoftBrush}"
                                                    FontSize="10" Foreground="#245A92" Text="设置…" />
@@ -581,7 +722,7 @@
                             <TextBlock FontFamily="Bahnschrift, Segoe UI" FontSize="15" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}" Text="可选的语音与输入设置" />
                             <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
-                                       Text="可在设置中按需下载 FunASR 模型，或配置 Azure Speech / GPT-4o，以及语言、热键和文字润色。"
+                                       Text="当前使用 SenseVoiceSmall 本地模型；也可在设置中切换其他 FunASR 模型、云端引擎、语言和热键。"
                                        TextWrapping="Wrap" />
                         </StackPanel>
                         <Button x:Name="CompletionOpenSettingsButton"
@@ -635,7 +776,7 @@
                             MinWidth="206"
                             Style="{StaticResource PrimaryButton}"
                             Content="关闭引导并开始使用"
-                            AutomationProperties.Name="关闭引导并开始使用 VoiceInput"
+                            AutomationProperties.Name="关闭引导并开始使用 gujiguji"
                             Click="OnFinishClick" />
                 </Grid>
             </Grid>

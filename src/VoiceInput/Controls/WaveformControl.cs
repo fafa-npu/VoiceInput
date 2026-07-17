@@ -12,6 +12,7 @@ namespace VoiceInput.Controls;
 public sealed class WaveformControl : FrameworkElement
 {
     private const int BarCount = 5;
+    private const double VisualGain = 2.0;
     private static readonly double[] Weights = { 0.5, 0.8, 1.0, 0.75, 0.55 };
     private const double Attack = 0.40;
     private const double Release = 0.15;
@@ -50,7 +51,7 @@ public sealed class WaveformControl : FrameworkElement
 
     private void OnRendering(object? sender, EventArgs e)
     {
-        double level = Math.Clamp(LevelSource?.Invoke() ?? 0, 0, 1);
+        double level = ApplyVisualGain(LevelSource?.Invoke() ?? 0);
         for (int i = 0; i < BarCount; i++)
         {
             double jitter = 1.0 + (_rng.NextDouble() * 0.08 - 0.04);   // ±4%
@@ -60,6 +61,8 @@ public sealed class WaveformControl : FrameworkElement
         }
         InvalidateVisual();
     }
+
+    internal static double ApplyVisualGain(double level) => Math.Clamp(level * VisualGain, 0, 1);
 
     protected override void OnRender(DrawingContext dc)
     {

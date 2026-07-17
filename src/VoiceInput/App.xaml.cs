@@ -26,7 +26,7 @@ public partial class App : Application
         DispatcherUnhandledException += (_, args) =>
         {
             Log.Write($"ERROR Unhandled dispatcher exception: {args.Exception}");
-            MessageBox.Show(args.Exception.Message, "VoiceInput error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(args.Exception.Message, "gujiguji error", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
 

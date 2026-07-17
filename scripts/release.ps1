@@ -56,9 +56,9 @@ if ($signature.Status -ne 'Valid') { throw "Authenticode signing failed: $($sign
 # Create the (published) release, or reuse it if the tag already exists.
 $body = @{
     tag_name = $Version
-    name     = "VoiceInput $Version"
+    name     = "gujiguji $Version"
     draft    = $false
-    body     = "Self-contained Windows build - no .NET install needed. Download VoiceInput.exe and double-click to run, or for auto-start at login: scripts/install.ps1 -Source VoiceInput.exe"
+    body     = "Self-contained gujiguji Windows build - no .NET install needed. Download VoiceInput.exe and double-click to run, or for auto-start at login: scripts/install.ps1 -Source VoiceInput.exe"
 } | ConvertTo-Json
 try {
     $rel = Invoke-RestMethod -Uri "$Api/repos/$Repo/releases" -Method Post -Headers $H -ContentType 'application/json' -Body $body

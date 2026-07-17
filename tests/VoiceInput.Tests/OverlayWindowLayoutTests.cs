@@ -1,4 +1,6 @@
 using System.Xml.Linq;
+using VoiceInput.Models;
+using VoiceInput.Views;
 
 namespace VoiceInput.Tests;
 
@@ -54,4 +56,20 @@ public sealed class OverlayWindowLayoutTests
         Assert.Equal("580", (string?)Named("Label").Attribute("MaxWidth"));
         Assert.DoesNotContain(document.Descendants(), element => element.Name.LocalName == "LinearGradientBrush");
     }
+
+    [Theory]
+    [InlineData(OverlayPosition.Top, 100, 1000, 150, 1.0, 164)]
+    [InlineData(OverlayPosition.Bottom, 100, 1000, 150, 1.0, 786)]
+    [InlineData(OverlayPosition.Top, 0, 1600, 225, 1.5, 96)]
+    [InlineData(OverlayPosition.Bottom, 0, 1600, 225, 1.5, 1279)]
+    public void OverlayPositionUsesTheConfiguredWorkAreaEdge(
+        OverlayPosition position,
+        int workTop,
+        int workBottom,
+        int physicalHeight,
+        double scale,
+        int expected) =>
+        Assert.Equal(
+            expected,
+            OverlayWindow.CalculateVerticalPosition(position, workTop, workBottom, physicalHeight, scale));
 }
