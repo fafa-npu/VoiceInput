@@ -2,11 +2,18 @@ namespace VoiceInput.Services;
 
 internal static class RefinementGuard
 {
-    public static bool IsSafe(string original, string refined)
+    public static bool IsSafe(string original, string refined, bool allowTransformation = false)
     {
         if (string.IsNullOrWhiteSpace(refined)) return false;
-        if (refined.Length > Math.Max(original.Length * 2, original.Length + 80)) return false;
+        long maxLength = allowTransformation
+            ? Math.Max(original.Length * 8L, original.Length + 500L)
+            : Math.Max(original.Length * 2L, original.Length + 80L);
+        if (refined.Length > maxLength) return false;
         if (refined.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t'))) return false;
+
+        // A non-empty custom prompt is an explicit request to transform the transcript. Keep
+        // output-shape protections above, but do not mistake translation or rewriting for drift.
+        if (allowTransformation) return true;
 
         var sourceCjk = CjkCharacters(original);
         if (original.Count(IsCjk) >= 4)

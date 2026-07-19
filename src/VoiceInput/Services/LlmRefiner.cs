@@ -7,10 +7,12 @@ using VoiceInput.Models;
 
 namespace VoiceInput.Services;
 
+internal sealed record CorrectionLearningReview(string Rules, string[] Vocabulary);
+
 /// <summary>
 /// Optional LLM post-processing of the transcript via an OpenAI-compatible Chat Completions API.
-/// The system prompt is deliberately conservative: fix only obvious speech-recognition errors,
-/// never rewrite or polish. Fails open — on any error the original transcript is returned.
+/// The built-in prompt is deliberately conservative. A custom prompt may intentionally transform
+/// the transcript. Fails open — on any error the original transcript is returned.
 /// </summary>
 public sealed class LlmRefiner
 {
@@ -53,9 +55,10 @@ public sealed class LlmRefiner
                 : $"[CONTEXT — surrounding text in the user's current app/terminal, reference only; do NOT output it]:\n{context}\n\n[DICTATION to correct]:\n{text}";
             string content = await ChatAsync(settings, BuildPrompt(settings), userContent, ct);
             content = content.Trim();
-            if (!RefinementGuard.IsSafe(text, content))
+            bool allowTransformation = !string.IsNullOrWhiteSpace(settings.LlmPrompt);
+            if (!RefinementGuard.IsSafe(text, content, allowTransformation))
             {
-                Log.Write("LLM refine output rejected by safety guard.");
+                Log.Write($"LLM refine output rejected by safety guard. mode={(allowTransformation ? "custom" : "conservative")}, inputLength={text.Length}, outputLength={content.Length}.");
                 return text;
             }
             return content;
@@ -101,9 +104,8 @@ public sealed class LlmRefiner
         && (endpoint.Scheme == Uri.UriSchemeHttps
             || (endpoint.Scheme == Uri.UriSchemeHttp && endpoint.IsLoopback));
 
-    internal static bool IsConfigured(AppSettings settings) =>
-        settings.LlmEnabled
-        && IsSupportedEndpoint(settings.LlmBaseUrl)
+    internal static bool HasConnection(AppSettings settings) =>
+        IsSupportedEndpoint(settings.LlmBaseUrl)
         && !string.IsNullOrWhiteSpace(settings.LlmModel);
 
     /// <summary>Built-in (or custom) refine prompt plus any learned correction rules.</summary>

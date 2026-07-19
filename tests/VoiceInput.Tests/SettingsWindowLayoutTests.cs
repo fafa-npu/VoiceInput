@@ -49,7 +49,9 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()));
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])));
         string[] terms = Enumerable.Range(1, 250)
             .Select(index => $"Term {index}")
             .ToArray();
@@ -140,8 +142,10 @@ public sealed class SettingsWindowLayoutTests
             new HttpClient(new OfflineHandler()),
             () => long.MaxValue,
             (_, _) => Task.CompletedTask);
-        var suggestions = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var suggestions = new TaskCompletionSource<CorrectionLearningReview>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         AppSettings? vocabularyRequestSettings = null;
+        int clearCalls = 0;
         var actions = new SettingsWindowActions(
             () => false,
             _ => { },
@@ -155,6 +159,8 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null,
+            () => 3,
+            () => clearCalls++,
             requestSettings =>
             {
                 vocabularyRequestSettings = requestSettings;
@@ -189,12 +195,14 @@ public sealed class SettingsWindowLayoutTests
             var separatorHint = Assert.IsType<TextBlock>(window.FindName("VocabularySeparatorHintText"));
             var supported = Assert.IsType<TextBlock>(window.FindName("VocabularySupportedModelsText"));
             var unsupported = Assert.IsType<TextBlock>(window.FindName("VocabularyUnsupportedModelsText"));
-            var suggestVocabulary = Assert.IsType<Button>(window.FindName("SuggestVocabularyButton"));
-            var suggestionStatus = Assert.IsType<TextBlock>(window.FindName("VocabularySuggestionStatusText"));
+            var reviewLearning = Assert.IsType<Button>(window.FindName("ReviewLearningButton"));
+            var learningStatus = Assert.IsType<TextBlock>(window.FindName("LearningStatusText"));
+            var correctionStatus = Assert.IsType<TextBlock>(window.FindName("CorrectionHistoryStatusText"));
+            var learningReview = Assert.IsType<StackPanel>(window.FindName("LearningReviewPanel"));
+            var suggestedTerms = Assert.IsType<StackPanel>(window.FindName("VocabularySuggestionsList"));
+            var applyLearning = Assert.IsType<Button>(window.FindName("ApplyLearningButton"));
             var useContext = Assert.IsType<CheckBox>(window.FindName("UseContextBox"));
             var learnFromEdits = Assert.IsType<CheckBox>(window.FindName("LearnFromEditsBox"));
-            var useContextHelp = Assert.IsType<TextBlock>(window.FindName("UseContextHelpText"));
-            var learnFromEditsHelp = Assert.IsType<TextBlock>(window.FindName("LearnFromEditsHelpText"));
             var diagnosticPrivacy = Assert.IsType<TextBlock>(window.FindName("DiagnosticPrivacyText"));
             var diagnosticLogging = Assert.IsType<CheckBox>(window.FindName("DiagnosticLoggingBox"));
             var llmEnabled = Assert.IsType<CheckBox>(window.FindName("LlmEnabledBox"));
@@ -234,10 +242,9 @@ public sealed class SettingsWindowLayoutTests
                 Assert.IsType<string>(diagnosticLogging.Content),
                 StringComparison.OrdinalIgnoreCase);
             Assert.False(useContext.IsEnabled);
-            Assert.False(learnFromEdits.IsEnabled);
-            Assert.False(suggestVocabulary.IsEnabled);
-            Assert.Contains("LLM", Assert.IsType<string>(useContextHelp.ToolTip), StringComparison.Ordinal);
-            Assert.Contains("LLM", Assert.IsType<string>(learnFromEditsHelp.ToolTip), StringComparison.Ordinal);
+            Assert.True(learnFromEdits.IsEnabled);
+            Assert.True(reviewLearning.IsEnabled);
+            Assert.Contains("3 saved corrections", correctionStatus.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("never uploaded", diagnosticPrivacy.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(Visibility.Collapsed, overviewLocalModel.Visibility);
             Assert.Equal(Visibility.Collapsed, overviewLocalReadiness.Visibility);
@@ -248,36 +255,45 @@ public sealed class SettingsWindowLayoutTests
             llmEnabled.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
             Assert.True(useContext.IsEnabled);
             Assert.True(learnFromEdits.IsEnabled);
-            Assert.True(suggestVocabulary.IsEnabled);
+            llmEnabled.IsChecked = false;
+            llmEnabled.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
 
-            suggestVocabulary.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Assert.False(suggestVocabulary.IsEnabled);
+            reviewLearning.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.False(reviewLearning.IsEnabled);
             vocabulary.Text = "Existing term, Added while waiting";
             string[] learnedTerms = Enumerable.Range(1, 24).Select(index => $"Learned term {index}").ToArray();
-            suggestions.SetResult(["Existing term", .. learnedTerms]);
+            suggestions.SetResult(new CorrectionLearningReview(
+                "- Prefer gujiguji for this recurring correction.",
+                ["Existing term", .. learnedTerms]));
             Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
-            Assert.True(Assert.IsType<AppSettings>(vocabularyRequestSettings).LlmEnabled);
+            Assert.False(Assert.IsType<AppSettings>(vocabularyRequestSettings).LlmEnabled);
+            Assert.Equal(Visibility.Visible, learningReview.Visibility);
+            Assert.Equal(24, suggestedTerms.Children.Count);
             Assert.Equal(
-                ["Existing term", "Added while waiting", .. learnedTerms],
+                ["Existing term", "Added while waiting"],
                 RecognitionVocabulary.Parse(vocabulary.Text).Entries);
-            Assert.Contains("24 suggestions", suggestionStatus.Text, StringComparison.Ordinal);
-            Assert.Contains("Save", suggestionStatus.Text, StringComparison.Ordinal);
+            Assert.All(suggestedTerms.Children.OfType<CheckBox>(), item => Assert.True(item.IsChecked));
+            Assert.IsType<CheckBox>(suggestedTerms.Children[0]).IsChecked = false;
+            applyLearning.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(
+                ["Existing term", "Added while waiting", .. learnedTerms.Skip(1)],
+                RecognitionVocabulary.Parse(vocabulary.Text).Entries);
+            Assert.Contains("staged", learningStatus.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Null(savedSettings);
-            Assert.True(suggestVocabulary.IsEnabled);
+            Assert.True(reviewLearning.IsEnabled);
+            Assert.Equal(0, clearCalls);
 
             vocabulary.Text = "Existing term";
             llmModel.Text = string.Empty;
             Assert.False(useContext.IsEnabled);
-            Assert.False(learnFromEdits.IsEnabled);
-            Assert.False(suggestVocabulary.IsEnabled);
+            Assert.True(learnFromEdits.IsEnabled);
+            Assert.True(reviewLearning.IsEnabled);
             llmModel.Text = "gpt-4.1-mini";
-            llmEnabled.IsChecked = false;
-            llmEnabled.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
 
             Assert.Equal("Existing term", vocabulary.Text);
             Assert.Equal("1 term", count.Text);
             Assert.Contains("transcription prompt", mode.Text, StringComparison.OrdinalIgnoreCase);
-            Assert.False(save.IsEnabled);
+            Assert.True(save.IsEnabled);
             vocabularyNav.IsChecked = true;
             Assert.Equal(Visibility.Visible, page.Visibility);
 
@@ -285,11 +301,11 @@ public sealed class SettingsWindowLayoutTests
             Assert.Equal("custom-deployment", deployment.Text);
             Assert.True(save.IsEnabled);
             modelKind.SelectedIndex = 0;
-            Assert.False(save.IsEnabled);
+            Assert.True(save.IsEnabled);
             vocabulary.Text = "Existing term\r\nSecond term";
             Assert.True(save.IsEnabled);
             vocabulary.Text = "Existing term";
-            Assert.False(save.IsEnabled);
+            Assert.True(save.IsEnabled);
 
             engine.SelectedIndex = 1;
             Assert.Contains("Azure Phrase List", mode.Text, StringComparison.Ordinal);
@@ -321,6 +337,8 @@ public sealed class SettingsWindowLayoutTests
             Assert.Equal(TranscribeModelKind.Gpt4oMiniTranscribe, saved.TranscribeModelKind);
             Assert.Equal("custom-deployment", saved.TranscribeModel);
             Assert.Equal(["Alpha", "Beta", "Gamma", "Delta", "Product Name"], saved.RecognitionVocabulary);
+            Assert.Contains("gujiguji", saved.LlmLearnedRules, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, clearCalls);
         }
         finally
         {
@@ -358,7 +376,9 @@ public sealed class SettingsWindowLayoutTests
             },
             _ => pendingInstall.TrySetCanceled(),
             () => activeModel,
-            _ => Task.FromResult(Array.Empty<string>()));
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])));
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -472,7 +492,9 @@ public sealed class SettingsWindowLayoutTests
             _ => Task.CompletedTask,
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()));
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])));
         var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
         {
             ShowInTaskbar = false,
@@ -542,7 +564,9 @@ public sealed class SettingsWindowLayoutTests
             },
             _ => { },
             () => null,
-            _ => Task.FromResult(Array.Empty<string>()));
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])));
         AppSettings? savedSettings = null;
         var window = new SettingsWindow(new AppSettings(), settings => savedSettings = settings, manager, actions)
         {
@@ -555,7 +579,7 @@ public sealed class SettingsWindowLayoutTests
         var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
         string? captureDirectory = Environment.GetEnvironmentVariable("VOICEINPUT_UI_CAPTURE_DIR");
 
-        foreach (string page in new[] { "Overview", "ModelSelection", "Profiles", "Vocabulary", "Refinement", "App" })
+        foreach (string page in new[] { "Overview", "ModelSelection", "Profiles", "Vocabulary", "App" })
         {
             var navigation = Assert.IsType<RadioButton>(window.FindName(page + "Nav"));
             navigation.IsChecked = true;
