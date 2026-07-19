@@ -15,12 +15,12 @@ public sealed class LlmRefinerVocabularyTests
     {
         var settings = new AppSettings
         {
-            LlmEnabled = true,
+            LlmEnabled = false,
             LlmBaseUrl = baseUrl,
             LlmModel = "test-model",
         };
 
-        Assert.Equal(expected, LlmRefiner.IsConfigured(settings));
+        Assert.Equal(expected, LlmRefiner.HasConnection(settings));
     }
 
     [Fact]

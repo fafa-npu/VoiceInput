@@ -216,11 +216,8 @@
                     <RadioButton x:Name="ProfilesNav" GroupName="SetupNavigation" Content="Profiles"
                                  Tag="&#xE77B;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
-                    <RadioButton x:Name="VocabularyNav" GroupName="SetupNavigation" Content="Vocabulary"
+                    <RadioButton x:Name="VocabularyNav" GroupName="SetupNavigation" Content="Language intelligence"
                                  Tag="&#xE8C1;" Style="{StaticResource NavRadio}"
-                                 Checked="OnNavigationChanged" />
-                    <RadioButton x:Name="RefinementNav" GroupName="SetupNavigation" Content="Refinement"
-                                 Tag="&#xE90F;" Style="{StaticResource NavRadio}"
                                  Checked="OnNavigationChanged" />
                     <RadioButton x:Name="AppNav" GroupName="SetupNavigation" Content="App"
                                  Tag="&#xE713;" Style="{StaticResource NavRadio}"
@@ -623,13 +620,14 @@
             <ScrollViewer x:Name="VocabularyPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
-                    <TextBlock Text="Vocabulary" Style="{StaticResource PageTitle}" />
-                    <TextBlock Text="Shared recognition hints for supported speech engines"
+                    <TextBlock Text="Language intelligence" Style="{StaticResource PageTitle}" />
+                    <TextBlock Text="Refinement, learning, and recognition vocabulary"
                                Style="{StaticResource PageSubtitle}" />
 
+                    <TextBlock Text="Names and terms" Style="{StaticResource SectionTitle}" />
                     <Border x:Name="VocabularyEngineStatusBorder"
                             Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="4,1,1,1"
-                            CornerRadius="5" Padding="14,11" Margin="0,0,0,16">
+                            CornerRadius="5" Padding="14,11" Margin="0,0,0,12">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="135" />
@@ -646,15 +644,13 @@
                                        FontSize="12" TextAlignment="Left" TextWrapping="Wrap" />
                         </Grid>
                     </Border>
-
                     <TextBlock x:Name="VocabularyTermsLabel" Text="Recognition terms"
-                               Style="{StaticResource SectionTitle}"
-                               Margin="0,0,0,5" />
+                               Style="{StaticResource SectionTitle}" Margin="0,0,0,5" />
                     <TextBlock x:Name="VocabularySeparatorHintText"
                                Text="Separate terms with commas, semicolons, or new lines. Spaces inside a term are preserved."
                                Foreground="{StaticResource MutedTextBrush}" FontSize="12"
                                TextWrapping="Wrap" Margin="0,0,0,8" />
-                    <TextBox x:Name="VocabularyBox" Height="130" AcceptsReturn="True"
+                    <TextBox x:Name="VocabularyBox" Height="112" AcceptsReturn="True"
                              TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                              VerticalContentAlignment="Top"
                              AutomationProperties.LabeledBy="{Binding ElementName=VocabularyTermsLabel}" />
@@ -667,18 +663,98 @@
                     </DockPanel>
 
                     <Separator Margin="0,20,0,10" />
-                    <TextBlock Text="Learn from edits" Style="{StaticResource SectionTitle}" />
-                    <TextBlock Text="Ask your configured LLM to find recurring names and domain terms in locally stored correction samples."
+                    <TextBlock Text="Language model connection" Style="{StaticResource SectionTitle}" />
+                    <TextBlock Text="Configure one OpenAI-compatible model. Setup alone does not enable refinement or send saved edits."
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                               TextWrapping="Wrap" Margin="0,0,0,9" />
+                    <Border Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="4,1,1,1"
+                            CornerRadius="5" Padding="14,10" Margin="0,0,0,12">
+                        <TextBlock x:Name="LlmConnectionStatusText" TextWrapping="Wrap" />
+                    </Border>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="API base URL" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="LlmBaseUrlBox" Grid.Row="0" Grid.Column="1" />
+                        <TextBlock x:Name="LlmApiKeyLabel" Grid.Row="1" Text="API key" Style="{StaticResource FieldLabel}" />
+                        <PasswordBox x:Name="LlmApiKeyBox" Grid.Row="1" Grid.Column="1"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=LlmApiKeyLabel}" />
+                        <TextBlock Grid.Row="2" Text="Model" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="LlmModelBox" Grid.Row="2" Grid.Column="1" />
+                        <TextBlock Grid.Row="3" Text="Custom prompt" Style="{StaticResource FieldLabel}"
+                                   VerticalAlignment="Top" />
+                        <TextBox x:Name="LlmPromptBox" Grid.Row="3" Grid.Column="1" Height="96"
+                                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                                 VerticalContentAlignment="Top" />
+                    </Grid>
+                    <DockPanel Margin="150,12,0,0">
+                        <Button x:Name="TestButton" DockPanel.Dock="Left" Content="Test connection"
+                                Style="{StaticResource SecondaryButton}" Click="OnTest" />
+                        <TextBlock x:Name="LlmTestStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                    </DockPanel>
+
+                    <Separator Margin="0,20,0,10" />
+                    <TextBlock Text="What it can do" Style="{StaticResource SectionTitle}" />
+                    <CheckBox x:Name="LlmEnabledBox" Content="Refine each dictation"
+                              FontWeight="SemiBold" />
+                    <TextBlock Text="Correct recognition mistakes and follow the custom prompt above."
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                               TextWrapping="Wrap" Margin="20,1,0,8" />
+                    <CheckBox x:Name="UseContextBox" Content="Use nearby app text for better refinement"
+                              Margin="20,0,0,0"
+                              AutomationProperties.HelpText="Nearby app text is sent only to your configured language model." />
+                    <CheckBox x:Name="LearnFromEditsBox" Content="Save my corrections for learning"
+                              FontWeight="SemiBold" Margin="0,10,0,0"
+                              AutomationProperties.HelpText="Correction samples are encrypted for your Windows account and stored on this device." />
+                    <TextBlock Text="Edit inserted text and press Enter in the same field. Samples stay encrypted locally; saving makes no network request."
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                               TextWrapping="Wrap" Margin="20,1,0,2" />
+                    <TextBlock x:Name="CorrectionHistoryStatusText"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                               TextWrapping="Wrap" Margin="20,0,0,0" />
+
+                    <Separator Margin="0,20,0,10" />
+                    <TextBlock Text="Learning from edits" Style="{StaticResource SectionTitle}" />
+                    <TextBlock x:Name="LearningPrivacyText"
                                Foreground="{StaticResource MutedTextBrush}" FontSize="12"
                                TextWrapping="Wrap" Margin="0,0,0,9" />
                     <StackPanel Orientation="Horizontal">
-                        <Button x:Name="SuggestVocabularyButton" Content="Suggest terms from edits"
-                                Style="{StaticResource SecondaryButton}"
-                                Click="OnSuggestVocabulary"
-                                ToolTip="Requires enabled and configured LLM refinement." />
-                        <TextBlock x:Name="VocabularySuggestionStatusText" Margin="12,0,0,0"
+                        <Button x:Name="ReviewLearningButton" Content="Review learning"
+                                Style="{StaticResource SecondaryButton}" Click="OnReviewLearning" />
+                        <Button x:Name="ClearCorrectionHistoryButton" Content="Delete history"
+                                Style="{StaticResource SecondaryButton}" Margin="8,0,0,0"
+                                Click="OnClearCorrectionHistory" />
+                        <TextBlock x:Name="LearningStatusText" Margin="12,0,0,0"
                                    VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}"
                                    TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel x:Name="LearningReviewPanel" Visibility="Collapsed" Margin="0,14,0,0">
+                        <StackPanel x:Name="LearnedRulesReviewPanel">
+                            <CheckBox x:Name="ApplyLearnedRulesBox" Content="Use these correction rules"
+                                      FontWeight="SemiBold" IsChecked="True" />
+                            <TextBox x:Name="LearnedRulesPreviewBox" Height="84" Margin="20,5,0,12"
+                                     IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto" />
+                        </StackPanel>
+                        <StackPanel x:Name="VocabularySuggestionsReviewPanel">
+                            <TextBlock Text="Names and terms" FontWeight="SemiBold" />
+                            <TextBlock Text="Uncheck anything you do not want to add."
+                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                       Margin="0,1,0,5" />
+                            <StackPanel x:Name="VocabularySuggestionsList" Margin="20,0,0,8" />
+                        </StackPanel>
+                        <Button x:Name="ApplyLearningButton" Content="Apply selected"
+                                Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left"
+                                Click="OnApplyLearning" />
                     </StackPanel>
 
                     <Separator Margin="0,20,0,10" />
@@ -703,47 +779,6 @@
                                    Text="Windows dictation, GPT-4o Transcribe Diarize, Other / unknown GPT deployments, and current FunASR local models"
                                    TextWrapping="Wrap" Margin="0,3,0,0" />
                     </Grid>
-                </StackPanel>
-            </ScrollViewer>
-
-            <ScrollViewer x:Name="RefinementPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <StackPanel>
-                    <TextBlock Text="Refinement" Style="{StaticResource PageTitle}" />
-                    <TextBlock Text="Optional OpenAI-compatible text correction"
-                               Style="{StaticResource PageSubtitle}" />
-                    <CheckBox x:Name="LlmEnabledBox" Content="Enable LLM refinement"
-                              FontWeight="SemiBold" Margin="0,0,0,12" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="API base URL" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="LlmBaseUrlBox" Grid.Row="0" Grid.Column="1" />
-                        <TextBlock x:Name="LlmApiKeyLabel" Grid.Row="1" Text="API key" Style="{StaticResource FieldLabel}" />
-                        <PasswordBox x:Name="LlmApiKeyBox" Grid.Row="1" Grid.Column="1"
-                                     AutomationProperties.LabeledBy="{Binding ElementName=LlmApiKeyLabel}" />
-                        <TextBlock Grid.Row="2" Text="Model" Style="{StaticResource FieldLabel}" />
-                        <TextBox x:Name="LlmModelBox" Grid.Row="2" Grid.Column="1" />
-                        <TextBlock Grid.Row="3" Text="Custom prompt" Style="{StaticResource FieldLabel}"
-                                   VerticalAlignment="Top" />
-                        <TextBox x:Name="LlmPromptBox" Grid.Row="3" Grid.Column="1" Height="112"
-                                 AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                                 VerticalContentAlignment="Top" />
-                    </Grid>
-                    <DockPanel Margin="150,14,0,0">
-                        <Button x:Name="TestButton" DockPanel.Dock="Left" Content="Test LLM"
-                                Style="{StaticResource SecondaryButton}" Click="OnTest" />
-                        <TextBlock x:Name="LlmTestStatusText" Margin="12,0,0,0" VerticalAlignment="Center"
-                                   Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-                    </DockPanel>
                 </StackPanel>
             </ScrollViewer>
 
@@ -774,21 +809,7 @@
                     </Grid>
 
                     <Separator Margin="0,18,0,10" />
-                    <TextBlock Text="Privacy and learning" Style="{StaticResource SectionTitle}" />
-                    <StackPanel Orientation="Horizontal">
-                        <CheckBox x:Name="UseContextBox" Content="Use surrounding app context for LLM refinement"
-                                  AutomationProperties.HelpText="Requires enabled and configured LLM refinement." />
-                        <TextBlock x:Name="UseContextHelpText" Text="?" Margin="5,0,0,0"
-                                   VerticalAlignment="Center" FontWeight="SemiBold" Cursor="Help"
-                                   ToolTip="Requires enabled and configured LLM refinement. Surrounding app text is sent only to your configured LLM provider." />
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <CheckBox x:Name="LearnFromEditsBox" Content="Learn correction rules from my edits"
-                                  AutomationProperties.HelpText="Requires enabled and configured LLM refinement." />
-                        <TextBlock x:Name="LearnFromEditsHelpText" Text="?" Margin="5,0,0,0"
-                                   VerticalAlignment="Center" FontWeight="SemiBold" Cursor="Help"
-                                   ToolTip="Requires enabled and configured LLM refinement. Up to 100 correction samples are encrypted locally; learning sends them only to your configured LLM provider." />
-                    </StackPanel>
+                    <TextBlock Text="Privacy and diagnostics" Style="{StaticResource SectionTitle}" />
                     <CheckBox x:Name="DiagnosticLoggingBox"
                               Content="Log transcript, vocabulary, and LLM output locally for diagnostics" />
                     <TextBlock x:Name="DiagnosticPrivacyText"

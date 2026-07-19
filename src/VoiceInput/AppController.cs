@@ -396,7 +396,7 @@ public sealed class AppController : IDisposable
                 return;
             }
             Log.Write("Injected into focused control.");
-            if (_settings.LearnFromEdits && LlmRefiner.IsConfigured(_settings))
+            if (_settings.LearnFromEdits)
                 _corrections.Arm(raw, text, target);
             _session.MoveTo(DictationSessionState.Idle);
         }
@@ -844,13 +844,10 @@ public sealed class AppController : IDisposable
         menu.Items.Add(profileMenu);
         menu.Items.Add(new WinForms.ToolStripSeparator());
 
-        var learnNow = new WinForms.ToolStripMenuItem("Learn from corrections…");
-        learnNow.Enabled = LlmRefiner.IsConfigured(_settings);
-        learnNow.ToolTipText = learnNow.Enabled
-            ? "Create refinement rules from locally stored correction samples."
-            : "Configure and enable LLM refinement first.";
-        learnNow.Click += (_, _) => LearnFromCorrections();
-        menu.Items.Add(learnNow);
+        var intelligence = new WinForms.ToolStripMenuItem("Language intelligence…");
+        intelligence.ToolTipText = "Open gujiguji — language intelligence settings.";
+        intelligence.Click += (_, _) => OpenSettings(showLanguageIntelligence: true);
+        menu.Items.Add(intelligence);
 
         var settings = new WinForms.ToolStripMenuItem("Settings…");
         settings.Click += (_, _) => OpenSettings();
@@ -902,7 +899,7 @@ public sealed class AppController : IDisposable
                 () => _hook.IsPttGestureChorded,
                 SetOnboardingPttMode,
                 CompleteOnboarding,
-                OpenSettings));
+                () => OpenSettings()));
         _firstRunWindow = window;
         window.Closed += (_, _) =>
         {
@@ -964,7 +961,7 @@ public sealed class AppController : IDisposable
         }
     }
 
-    private void OpenSettings()
+    private void OpenSettings(bool showLanguageIntelligence = false)
     {
         FirstRunWindow? firstRun = _firstRunWindow;
         if (firstRun is { IsVisible: true })
@@ -997,7 +994,10 @@ public sealed class AppController : IDisposable
             InstallFunAsrAsync,
             CancelFunAsrInstall,
             ActiveFunAsrModelId,
-            ExtractVocabularyFromCorrectionsAsync));
+            () => _corrections.LoadPairs().Count,
+            _corrections.Clear,
+            ReviewCorrectionsAsync),
+            showLanguageIntelligence);
         if (firstRun is not null)
         {
             win.Owner = firstRun;
@@ -1134,59 +1134,22 @@ public sealed class AppController : IDisposable
 
     // ---------------- Learn from edits ----------------
 
-    private void LearnFromCorrections()
+    private async Task<CorrectionLearningReview> ReviewCorrectionsAsync(AppSettings settings)
     {
-        if (!LlmRefiner.IsConfigured(_settings))
-        {
-            Notify("LLM refinement required", "Configure and enable LLM refinement in Settings first.");
-            return;
-        }
-        var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
-        if (pairs.Count < 3)
-        {
-            Notify("Not enough edits yet", $"{pairs.Count} captured. Keep dictating + editing (needs ~3+, and 'Learn from my edits' on).");
-            return;
-        }
-        Notify("Learning…", $"Summarizing {pairs.Count} corrections.");
-        _ = LearnAsync(pairs);
-    }
-
-    private async Task LearnAsync(System.Collections.Generic.List<(string Raw, string Refined, string Edited)> pairs)
-    {
-        string rules;
-        try { rules = await _refiner.SummarizeCorrectionsAsync(pairs, _settings); }
-        catch (Exception ex) { _ = _ui.BeginInvoke(() => Notify("Learn failed", ex.Message)); return; }
-
-        _ = _ui.BeginInvoke(() =>
-        {
-            if (string.IsNullOrWhiteSpace(rules)) { Notify("Nothing learned", "No recurring patterns found."); return; }
-            var ans = MessageBox.Show(
-                $"Apply these learned correction rules to your refine prompt?\n\n{rules}",
-                "gujiguji — learned rules", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (ans == MessageBoxResult.Yes)
-            {
-                _settings.LlmLearnedRules = rules;
-                _store.Save(_settings);
-                _corrections.Clear();
-                Notify("Applied", "Learned rules added to your refine prompt.");
-            }
-        });
-    }
-
-    private async Task<string[]> ExtractVocabularyFromCorrectionsAsync(AppSettings settings)
-    {
-        if (!LlmRefiner.IsConfigured(settings))
-            throw new InvalidOperationException("Configure and enable LLM refinement first.");
+        if (!LlmRefiner.HasConnection(settings))
+            throw new InvalidOperationException("Set up the language model connection first.");
 
         var pairs = _corrections.LoadPairs().TakeLast(100).ToList();
         if (pairs.Count < 3)
             throw new InvalidOperationException(
                 $"Not enough edits yet ({pairs.Count} captured). At least 3 are required.");
 
-        Log.Write($"Vocabulary learning requested sampleCount={pairs.Count}.");
-        string[] candidates = await _refiner.ExtractVocabularyAsync(pairs, settings);
-        Log.Write($"Vocabulary learning completed candidateCount={candidates.Length}.");
-        return candidates;
+        Log.Write($"Correction learning requested sampleCount={pairs.Count}.");
+        Task<string> rules = _refiner.SummarizeCorrectionsAsync(pairs, settings);
+        Task<string[]> vocabulary = _refiner.ExtractVocabularyAsync(pairs, settings);
+        await Task.WhenAll(rules, vocabulary);
+        Log.Write($"Correction learning completed ruleLength={rules.Result.Length} candidateCount={vocabulary.Result.Length}.");
+        return new CorrectionLearningReview(rules.Result, vocabulary.Result);
     }
 
     private void Notify(string title, string message) =>

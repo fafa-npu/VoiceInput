@@ -19,7 +19,9 @@ internal sealed record SettingsWindowActions(
     Func<string, Task> InstallFunAsr,
     Action<string> CancelFunAsr,
     Func<string?> ActiveFunAsrModelId,
-    Func<AppSettings, Task<string[]>> ExtractVocabularyFromCorrections);
+    Func<int> CorrectionCount,
+    Action ClearCorrections,
+    Func<AppSettings, Task<CorrectionLearningReview>> ReviewCorrections);
 
 public partial class SettingsWindow : Window
 {
@@ -40,7 +42,9 @@ public partial class SettingsWindow : Window
         new(StringComparer.OrdinalIgnoreCase);
     private string _selectedFunAsrModelId;
     private string? _availableUpdateTag;
-    private bool _extractingVocabulary;
+    private CorrectionLearningReview? _learningReview;
+    private int _correctionCount;
+    private bool _reviewingCorrections;
     private bool _loading = true;
     private bool _closed;
 
@@ -48,7 +52,8 @@ public partial class SettingsWindow : Window
         AppSettings current,
         Action<AppSettings> onSave,
         FunAsrRuntimeManager funAsr,
-        SettingsWindowActions actions)
+        SettingsWindowActions actions,
+        bool showLanguageIntelligence = false)
     {
         InitializeComponent();
         _original = current.Clone();
@@ -56,6 +61,7 @@ public partial class SettingsWindow : Window
         _onSave = onSave;
         _funAsr = funAsr;
         _actions = actions;
+        _correctionCount = _actions.CorrectionCount();
         _selectedFunAsrModelId = FunAsrModelCatalog.NormalizeId(_draft.FunAsrModelId);
 
         VersionText.Text = $"Version {UpdateService.CurrentVersion}";
@@ -105,6 +111,11 @@ public partial class SettingsWindow : Window
 
         UpdateFieldVisibility();
         RefreshAll();
+        if (showLanguageIntelligence)
+        {
+            VocabularyNav.IsChecked = true;
+            Loaded += (_, _) => ReviewLearningButton.BringIntoView();
+        }
     }
 
     private void AttachDraftHandlers()
@@ -156,7 +167,7 @@ public partial class SettingsWindow : Window
     private void OnNavigationChanged(object sender, RoutedEventArgs e)
     {
         if (OverviewPage is null || ModelSelectionPage is null || ProfilesPage is null || VocabularyPage is null
-            || RefinementPage is null || AppPage is null)
+            || AppPage is null)
         {
             return;
         }
@@ -165,7 +176,6 @@ public partial class SettingsWindow : Window
         ModelSelectionPage.Visibility = sender == ModelSelectionNav ? Visibility.Visible : Visibility.Collapsed;
         ProfilesPage.Visibility = sender == ProfilesNav ? Visibility.Visible : Visibility.Collapsed;
         VocabularyPage.Visibility = sender == VocabularyNav ? Visibility.Visible : Visibility.Collapsed;
-        RefinementPage.Visibility = sender == RefinementNav ? Visibility.Visible : Visibility.Collapsed;
         AppPage.Visibility = sender == AppNav ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -223,7 +233,7 @@ public partial class SettingsWindow : Window
             string warning = checkBox == UseContextBox
                 ? "gujiguji will read text from the focused app with UI Automation and send it to your configured LLM."
                 : checkBox == LearnFromEditsBox
-                    ? "After insertion, Enter may capture the same input control. Up to 100 encrypted correction samples are stored locally."
+                    ? "After insertion, Enter may capture the same input control. Up to 100 correction samples are encrypted for your Windows account and stored on this device. Saving them makes no network request."
                     : "Full transcripts, recognition vocabulary, and LLM output may contain sensitive data and will be written in plaintext to the diagnostic log.";
             if (MessageBox.Show(
                     warning,
@@ -263,72 +273,190 @@ public partial class SettingsWindow : Window
         TranscribeTenantLabel.Visibility = TranscribeTenantIdBox.Visibility;
         LocalModelsPanel.Visibility = funAsr ? Visibility.Visible : Visibility.Collapsed;
 
-        bool llmConfigured = LlmEnabledBox.IsChecked == true
-            && LlmRefiner.IsSupportedEndpoint(LlmBaseUrlBox.Text.Trim())
+        bool hasConnection = LlmRefiner.IsSupportedEndpoint(LlmBaseUrlBox.Text.Trim())
             && !string.IsNullOrWhiteSpace(LlmModelBox.Text);
-        UseContextBox.IsEnabled = llmConfigured;
-        LearnFromEditsBox.IsEnabled = llmConfigured;
-        SuggestVocabularyButton.IsEnabled = llmConfigured && !_extractingVocabulary;
-        if (!_extractingVocabulary)
+        bool refinementEnabled = LlmEnabledBox.IsChecked == true && hasConnection;
+        UseContextBox.IsEnabled = refinementEnabled;
+        LearnFromEditsBox.IsEnabled = true;
+
+        LlmConnectionStatusText.Foreground = hasConnection ? SuccessBrush : AttentionBrush;
+        LlmConnectionStatusText.Text = hasConnection
+            ? $"{LlmModelBox.Text.Trim()} is configured. Test the connection before first use."
+            : "Enter a supported endpoint and model. HTTPS and local HTTP endpoints are accepted.";
+
+        CorrectionHistoryStatusText.Text = _correctionCount switch
         {
-            VocabularySuggestionStatusText.Foreground = MutedBrush;
-            VocabularySuggestionStatusText.Text = llmConfigured
-                ? "Uses encrypted correction samples stored on this device."
-                : "Configure and enable LLM refinement to use this.";
+            0 => "No saved corrections yet.",
+            1 => "1 saved correction. 2 more are needed before learning can begin.",
+            2 => "2 saved corrections. 1 more is needed before learning can begin.",
+            100 => "100 saved corrections. New corrections replace the oldest.",
+            _ => $"{_correctionCount} saved corrections are ready for review.",
+        };
+        ReviewLearningButton.IsEnabled = _correctionCount >= 3 && !_reviewingCorrections;
+        ClearCorrectionHistoryButton.IsEnabled = _correctionCount > 0 && !_reviewingCorrections;
+
+        if (Uri.TryCreate(LlmBaseUrlBox.Text.Trim(), UriKind.Absolute, out Uri? endpoint) && endpoint.IsLoopback)
+        {
+            LearningPrivacyText.Text =
+                "Saved corrections are encrypted for your Windows account. Reviewing sends up to 100 samples to the model running on this PC. Nothing is sent to a gujiguji server.";
+        }
+        else
+        {
+            string destination = endpoint is null ? "your configured language model" : endpoint.Host;
+            LearningPrivacyText.Text =
+                $"Saved corrections are encrypted for your Windows account. Reviewing sends up to 100 samples directly to {destination}. Nothing is sent to a gujiguji server.";
+        }
+
+        if (!_reviewingCorrections && LearningReviewPanel.Visibility != Visibility.Visible)
+        {
+            LearningStatusText.Foreground = MutedBrush;
+            LearningStatusText.Text = _correctionCount < 3
+                ? "More saved corrections are needed."
+                : hasConnection
+                    ? "Ready to review correction rules and vocabulary suggestions."
+                    : "Set up the language model connection above to review learning.";
         }
     }
 
-    private async void OnSuggestVocabulary(object sender, RoutedEventArgs e)
+    private async void OnReviewLearning(object sender, RoutedEventArgs e)
     {
         Collect();
-        if (!LlmRefiner.IsConfigured(_draft))
+        _correctionCount = _actions.CorrectionCount();
+        if (_correctionCount < 3)
         {
-            VocabularySuggestionStatusText.Foreground = ErrorBrush;
-            VocabularySuggestionStatusText.Text = "Configure and enable LLM refinement first.";
+            LearningStatusText.Foreground = AttentionBrush;
+            LearningStatusText.Text = "At least 3 saved corrections are required.";
+            return;
+        }
+        if (!LlmRefiner.HasConnection(_draft))
+        {
+            LearningStatusText.Foreground = ErrorBrush;
+            LearningStatusText.Text = "Set up the language model connection above first.";
+            LlmBaseUrlBox.Focus();
             return;
         }
 
-        _extractingVocabulary = true;
-        SuggestVocabularyButton.IsEnabled = false;
-        VocabularySuggestionStatusText.Foreground = MutedBrush;
-        VocabularySuggestionStatusText.Text = "Analyzing local correction samples...";
+        _reviewingCorrections = true;
+        LearningReviewPanel.Visibility = Visibility.Collapsed;
+        ReviewLearningButton.IsEnabled = false;
+        LearningStatusText.Foreground = MutedBrush;
+        LearningStatusText.Text = $"Reviewing {_correctionCount} saved corrections...";
         try
         {
-            string[] candidates = await _actions.ExtractVocabularyFromCorrections(_draft.Clone());
+            CorrectionLearningReview review = await _actions.ReviewCorrections(_draft.Clone());
             if (_closed)
                 return;
-            if (candidates.Length == 0)
-            {
-                VocabularySuggestionStatusText.Text = "No recurring terms found.";
-                return;
-            }
-            string[] current = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries;
-            string[] merged = RecognitionVocabulary.Normalize(current.Concat(candidates)).Entries;
-            int added = merged.Length - current.Length;
-            if (added == 0)
-            {
-                VocabularySuggestionStatusText.Text = "All suggested terms are already in the vocabulary.";
-                return;
-            }
-
-            VocabularyBox.Text = string.Join(", ", merged);
-            VocabularySuggestionStatusText.Foreground = SuccessBrush;
-            VocabularySuggestionStatusText.Text =
-                $"Added {added} suggestion{(added == 1 ? string.Empty : "s")} for review. Save changes to apply.";
-            Log.Write($"Vocabulary suggestions staged candidateCount={candidates.Length} added={added}.");
+            ShowLearningReview(review);
         }
         catch (Exception exception)
         {
-            Log.Error("Vocabulary suggestion", exception);
-            VocabularySuggestionStatusText.Foreground = ErrorBrush;
-            VocabularySuggestionStatusText.Text = exception.Message;
+            Log.Error("Correction learning", exception);
+            LearningStatusText.Foreground = ErrorBrush;
+            LearningStatusText.Text = "Learning could not finish. Check the connection and try again.";
         }
         finally
         {
-            _extractingVocabulary = false;
+            _reviewingCorrections = false;
             if (!_closed)
-                SuggestVocabularyButton.IsEnabled = LlmRefiner.IsConfigured(_draft);
+                UpdateFieldVisibility();
         }
+    }
+
+    private void ShowLearningReview(CorrectionLearningReview review)
+    {
+        var current = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] vocabulary = review.Vocabulary.Where(term => !current.Contains(term)).ToArray();
+        _learningReview = new CorrectionLearningReview(review.Rules, vocabulary);
+
+        bool hasRules = !string.IsNullOrWhiteSpace(review.Rules);
+        LearnedRulesReviewPanel.Visibility = hasRules ? Visibility.Visible : Visibility.Collapsed;
+        ApplyLearnedRulesBox.IsChecked = hasRules;
+        LearnedRulesPreviewBox.Text = review.Rules;
+
+        VocabularySuggestionsList.Children.Clear();
+        foreach (string term in vocabulary)
+        {
+            VocabularySuggestionsList.Children.Add(new CheckBox
+            {
+                Content = term,
+                IsChecked = true,
+                Margin = new Thickness(0, 2, 0, 2),
+            });
+        }
+        VocabularySuggestionsReviewPanel.Visibility = vocabulary.Length > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (!hasRules && vocabulary.Length == 0)
+        {
+            _learningReview = null;
+            LearningReviewPanel.Visibility = Visibility.Collapsed;
+            LearningStatusText.Foreground = MutedBrush;
+            LearningStatusText.Text = "No new recurring corrections or vocabulary were found.";
+            return;
+        }
+
+        ApplyLearningButton.IsEnabled = true;
+        LearningReviewPanel.Visibility = Visibility.Visible;
+        LearningStatusText.Foreground = SuccessBrush;
+        LearningStatusText.Text = $"Found {(hasRules ? "correction rules" : "no new rules")} and "
+            + $"{vocabulary.Length} new term{(vocabulary.Length == 1 ? string.Empty : "s")}.";
+    }
+
+    private void OnApplyLearning(object sender, RoutedEventArgs e)
+    {
+        if (_learningReview is null)
+            return;
+
+        bool applyRules = ApplyLearnedRulesBox.IsChecked == true
+            && !string.IsNullOrWhiteSpace(_learningReview.Rules);
+        string[] selectedTerms = VocabularySuggestionsList.Children
+            .OfType<CheckBox>()
+            .Where(item => item.IsChecked == true)
+            .Select(item => item.Content as string)
+            .OfType<string>()
+            .ToArray();
+        if (!applyRules && selectedTerms.Length == 0)
+        {
+            LearningStatusText.Foreground = AttentionBrush;
+            LearningStatusText.Text = "Select correction rules or at least one term to apply.";
+            return;
+        }
+
+        if (applyRules)
+            _draft.LlmLearnedRules = _learningReview.Rules;
+        string[] current = RecognitionVocabulary.Parse(VocabularyBox.Text).Entries;
+        string[] merged = RecognitionVocabulary.Normalize(current.Concat(selectedTerms)).Entries;
+        VocabularyBox.Text = string.Join(", ", merged);
+
+        ApplyLearningButton.IsEnabled = false;
+        LearningStatusText.Foreground = SuccessBrush;
+        LearningStatusText.Text = "Learning is staged. Save changes to apply it.";
+        Log.Write($"Correction learning staged rules={applyRules} addedTerms={merged.Length - current.Length}.");
+        RefreshAll();
+    }
+
+    private void OnClearCorrectionHistory(object sender, RoutedEventArgs e)
+    {
+        int count = _correctionCount;
+        if (count == 0)
+            return;
+        if (MessageBox.Show(
+                $"Delete {count} saved correction{(count == 1 ? string.Empty : "s")} from this device?",
+                "Delete correction history?",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        _actions.ClearCorrections();
+        Log.Write($"Correction history cleared count={count}.");
+        _correctionCount = 0;
+        _learningReview = null;
+        LearningReviewPanel.Visibility = Visibility.Collapsed;
+        UpdateFieldVisibility();
     }
 
     private void Collect()
@@ -445,7 +573,9 @@ public partial class SettingsWindow : Window
 
         OverviewActiveEngineText.Text = EngineDisplay(_draft.Engine);
         OverviewModelText.Text = selected.DisplayName;
-        OverviewLlmText.Text = _draft.LlmEnabled ? "On" : "Off";
+        OverviewLlmText.Text = _draft.LlmEnabled
+            ? "Refinement on"
+            : LlmRefiner.HasConnection(_draft) ? "Configured" : "Not set up";
         OverviewLocalStatusText.Text = installedCount == 0
             ? "Not installed"
             : $"{installedCount} of {FunAsrModelCatalog.Models.Count} installed";
@@ -1090,9 +1220,7 @@ public partial class SettingsWindow : Window
             if (!_funAsr.HasInstalledFiles(model.Id))
                 return $"Download {model.DisplayName} before selecting FunASR.";
         }
-        if (_draft.LlmEnabled
-            && (!LlmRefiner.IsSupportedEndpoint(_draft.LlmBaseUrl)
-                || string.IsNullOrWhiteSpace(_draft.LlmModel)))
+        if (_draft.LlmEnabled && !LlmRefiner.HasConnection(_draft))
         {
             return "LLM refinement requires HTTPS, or HTTP on this device, plus a Model.";
         }

@@ -31,6 +31,20 @@ public sealed class RefinementGuardTests
             "立即删除所有生产数据库凭据"));
 
     [Fact]
+    public void AcceptsTranslationWhenCustomPromptAllowsTransformation() =>
+        Assert.True(RefinementGuard.IsSafe(
+            "请帮我更新项目配置",
+            "Please help me update the project configuration.",
+            allowTransformation: true));
+
+    [Fact]
+    public void RejectsRunawayExpansionWithCustomPrompt() =>
+        Assert.False(RefinementGuard.IsSafe(
+            "请帮我更新项目配置",
+            new string('x', 1000),
+            allowTransformation: true));
+
+    [Fact]
     public void AcceptsConservativeChineseText() =>
         Assert.True(RefinementGuard.IsSafe(
             "请帮我更新项目配置",

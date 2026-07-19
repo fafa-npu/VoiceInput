@@ -48,7 +48,7 @@ This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correcti
 gujiguji defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
 optional **speech-aware LLM refinement layer** can be configured for:
 
-- **Sound-error correction.** The refine prompt knows the input was _spoken_, so it fixes the
+- **Sound-error correction.** The built-in refine prompt knows the input was _spoken_, so it fixes the
   errors speech recognition actually makes — Chinese homophones / near-homophones, and tech terms
   misheard into phonetics (配森 → Python, 杰森 → JSON, 瑞克特 → React) — instead of treating them
   as typos. It also adds punctuation, strips filler words (嗯 / 呃 / um / uh / you know), and
@@ -56,8 +56,8 @@ optional **speech-aware LLM refinement layer** can be configured for:
 - **Context-aware refinement.** Opt in and it reads the text around your cursor — including your
   **terminal buffer** — via UI Automation, and feeds it to the LLM as context. Say a branch name
   it mishears and it corrects to the real one on screen (`瑞法克特` → `query-inspector-refactor`).
-- **Fully customizable prompt.** The refine system prompt is yours to change — set `LlmPrompt` in
-  `settings.json` to tune the behavior, or leave it blank for the built-in speech-aware default.
+- **Fully customizable prompt.** A custom prompt can intentionally translate or rewrite the
+  transcript. Leave it blank for the conservative speech-aware default.
 - **Bring your own model.** Any OpenAI-compatible endpoint (Base URL / Key / Model).
 
 ## Features
@@ -101,7 +101,7 @@ optional **speech-aware LLM refinement layer** can be configured for:
 | **Start**                | Start Menu → **gujiguji**, or it auto-starts at login                               |
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
-| **Context-aware refine** | Settings → App (off by default; sends app text only to your configured LLM)           |
+| **Context-aware refine** | Settings → Language intelligence (off by default)                                    |
 | **Setup**                | Tray → **Settings…**                                                                 |
 
 ## Local FunASR
@@ -130,9 +130,11 @@ this release link to the [Apache 2.0 license](https://www.apache.org/licenses/LI
 
 Tray → **Settings…** opens the Setup Hub. **Model Selection** contains speech engines, cloud
 authentication, and local-model downloads; **Profiles** configures the two activation and overlay
-presets; **Vocabulary** manages recognition terms; **Refinement** contains the OpenAI-compatible
-Base URL, key, model, and custom prompt; **App** contains language, privacy, startup, update, and
-logging controls.
+presets; **Language intelligence** combines recognition terms, the OpenAI-compatible model
+connection, live refinement, and reviewed learning from locally encrypted corrections; **App**
+contains language, privacy, startup, update, and logging controls. Saving corrections makes no
+network request. **Review learning** sends them only to the configured language-model endpoint and
+never clears the history automatically.
 Secret fields are DPAPI-encrypted per Windows user in `%APPDATA%\VoiceInput\settings.json`.
 
 ## Build (developers)
