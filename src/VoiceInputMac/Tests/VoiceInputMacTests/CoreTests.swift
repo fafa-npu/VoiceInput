@@ -81,6 +81,7 @@ final class CoreTests: XCTestCase {
 
     func testDefaultsNormalizeAndWaveHeader() {
         var settings = AppSettings()
+        XCTAssertEqual(settings.funAsrModelId, FunAsrCatalog.qwen3AsrId)
         settings.profiles[1].name = " desktop "
         settings.normalize()
         XCTAssertEqual(settings.profiles.count, 2)
@@ -89,6 +90,35 @@ final class CoreTests: XCTestCase {
         let wave = PcmWave.wrap(Data([0, 1, 2, 3]))
         XCTAssertEqual(String(data: wave.prefix(4), encoding: .ascii), "RIFF")
         XCTAssertEqual(wave.count, 48)
+    }
+
+    func testLegacySettingsKeepHistoricalSenseVoiceModel() {
+        XCTAssertEqual(
+            SettingsStore.restoredLocalModelId(nil),
+            FunAsrCatalog.senseVoiceId)
+        XCTAssertEqual(
+            SettingsStore.restoredLocalModelId(FunAsrCatalog.senseVoiceId),
+            FunAsrCatalog.senseVoiceId)
+        XCTAssertEqual(
+            SettingsStore.restoredLocalModelId(FunAsrCatalog.qwen3AsrId),
+            FunAsrCatalog.qwen3AsrId)
+    }
+
+    func testSettingsStoreDistinguishesFreshAndLegacyModelDefaults() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("settings-defaults-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let settingsURL = directory.appendingPathComponent("settings.json")
+        let store = SettingsStore(settingsURL: settingsURL)
+
+        XCTAssertEqual(store.load().funAsrModelId, FunAsrCatalog.qwen3AsrId)
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: settingsURL)
+        XCTAssertEqual(store.load().funAsrModelId, FunAsrCatalog.senseVoiceId)
+
+        try Data("{\"funAsrModelId\":\"sensevoice-small-q8\"}".utf8).write(to: settingsURL)
+        XCTAssertEqual(store.load().funAsrModelId, FunAsrCatalog.senseVoiceId)
     }
 
     func testPttRoutingMatchesHoldAndToggleContracts() {

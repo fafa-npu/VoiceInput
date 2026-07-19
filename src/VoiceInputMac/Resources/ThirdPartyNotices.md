@@ -8,6 +8,7 @@
 - [transcribe.cpp 0.1.3](https://github.com/handy-computer/transcribe.cpp) and its bundled ggml,
   miniz, and backend components are redistributed under the license files shipped in the pinned
   `CTranscribe` XCFramework.
-- [Qwen3-ASR 0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) model weights are Apache-2.0.
-  The app downloads the pinned Q8_0 GGUF from `handy-computer/Qwen3-ASR-0.6B-gguf` and verifies
-  its SHA-256 digest before loading it.
+- [Qwen3-ASR 0.6B](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) and
+  [Qwen3-ASR 1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) model weights are Apache-2.0.
+  The app downloads pinned Q8_0 and Q5_K_M GGUF files from the corresponding `handy-computer`
+  transcribe.cpp repositories and verifies their SHA-256 digests before loading them.

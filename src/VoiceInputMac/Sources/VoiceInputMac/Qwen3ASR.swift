@@ -14,11 +14,11 @@ enum Qwen3AsrError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            "Qwen3-ASR 0.6B is not installed. Download it from Model Selection first."
+            "The selected Qwen3-ASR model is not installed. Download it from Model Selection first."
         case .installationBusy:
             "Wait for the active local-model operation to finish."
         case .insufficientDiskSpace:
-            "There is not enough disk space for Qwen3-ASR 0.6B."
+            "There is not enough disk space for the selected Qwen3-ASR model."
         case .invalidResponse(let detail):
             "The Qwen3-ASR download response is invalid: \(detail)"
         case .invalidHash(let name):
@@ -293,7 +293,7 @@ final class Qwen3AsrRuntimeManager: Qwen3AsrTranscribing, @unchecked Sendable {
         let status = url.path.withCString {
             transcribe_model_load_file($0, &params, &model)
         }
-        try Self.check(status, operation: "loading Qwen3-ASR 0.6B")
+        try Self.check(status, operation: "loading the Qwen3-ASR model")
         guard let model else { throw Qwen3AsrError.native("the runtime returned an empty model") }
         loadedModel = model
         loadedPath = url.path

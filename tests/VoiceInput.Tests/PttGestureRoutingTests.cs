@@ -29,7 +29,7 @@ public sealed class PttGestureRoutingTests
     }
 
     [Theory]
-    [InlineData(FirstRunCompletionChoice.DefaultLocal, SpeechEngineKind.GptTranscribe, "paraformer-zh-q8", SpeechEngineKind.FunAsr, FunAsrModelCatalog.DefaultId)]
+    [InlineData(FirstRunCompletionChoice.DefaultLocal, SpeechEngineKind.GptTranscribe, "paraformer-zh-q8", SpeechEngineKind.FunAsr, FunAsrModelCatalog.Qwen3AsrId)]
     [InlineData(FirstRunCompletionChoice.Configured, SpeechEngineKind.GptTranscribe, "paraformer-zh-q8", SpeechEngineKind.GptTranscribe, "paraformer-zh-q8")]
     [InlineData(FirstRunCompletionChoice.WindowsFallback, SpeechEngineKind.FunAsr, "paraformer-zh-q8", SpeechEngineKind.Windows, "paraformer-zh-q8")]
     public void OnboardingCompletionPreservesAnExplicitlyConfiguredEngine(

@@ -10,17 +10,23 @@ final class ParityTests: XCTestCase {
     }
 
     func testFunAsrCatalogIsPinnedAndLanguageAware() throws {
+        XCTAssertEqual(FunAsrCatalog.defaultId, "qwen3-asr-0.6b-q8")
+        XCTAssertNotEqual(FunAsrCatalog.defaultId, FunAsrCatalog.qwen3Asr17Id)
         XCTAssertEqual(FunAsrCatalog.runtimeVersion, "v0.1.4")
         XCTAssertEqual(FunAsrCatalog.runtime.size, 6_816_662)
         XCTAssertEqual(FunAsrCatalog.runtime.sha256,
                        "010416baa6932c7ce67fda50eb421a65e8ae6fd248f06f8d2f7ec17d15ef2cba")
         XCTAssertEqual(FunAsrCatalog.models.map(\.id), [
             "sensevoice-small-q8", "paraformer-zh-q8", "fun-asr-nano-q4",
-            "qwen3-asr-0.6b-q8",
+            "qwen3-asr-0.6b-q8", "qwen3-asr-1.7b-q5km",
         ])
         XCTAssertEqual(LocalModelViewState.defaults.map(\.id), FunAsrCatalog.models.map(\.id))
         XCTAssertTrue(try FunAsrCatalog.model(FunAsrCatalog.defaultId).supports("ko-KR"))
-        XCTAssertFalse(try FunAsrCatalog.model(FunAsrCatalog.defaultId).supports("vi-VN"))
+        XCTAssertTrue(try FunAsrCatalog.model(FunAsrCatalog.defaultId).supports("vi-VN"))
+        XCTAssertFalse(try FunAsrCatalog.model(FunAsrCatalog.senseVoiceId).supports("vi-VN"))
+        XCTAssertEqual(
+            LocalModelViewState.defaults.filter(\.isRecommended).map(\.id),
+            [FunAsrCatalog.qwen3AsrId])
         let qwen = try FunAsrCatalog.model(FunAsrCatalog.qwen3AsrId)
         XCTAssertEqual(qwen.runner, .qwen3Asr)
         XCTAssertTrue(qwen.supports("vi-VN"))
@@ -28,6 +34,15 @@ final class ParityTests: XCTestCase {
         XCTAssertEqual(qwen.artifacts.first?.size, 850_423_456)
         XCTAssertEqual(qwen.artifacts.first?.sha256,
                        "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8")
+        let qwen17 = try FunAsrCatalog.model(FunAsrCatalog.qwen3Asr17Id)
+        XCTAssertEqual(qwen17.runner, .qwen3Asr)
+        XCTAssertTrue(qwen17.supports("vi-VN"))
+        XCTAssertEqual(qwen17.artifacts.count, 1)
+        XCTAssertEqual(qwen17.artifacts.first?.size, 1_517_290_464)
+        XCTAssertEqual(qwen17.artifacts.first?.sha256,
+                       "034c557fe92ff8fcd9a9c041cbdaad347be0a86a58d3a348f63cf3f0180879d0")
+        XCTAssertEqual(qwen17.artifacts.first?.url.absoluteString,
+                       "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/92282af1610a2db19d66f2bef1e260f5deca782d/Qwen3-ASR-1.7B-Q5_K_M.gguf")
         for artifact in [FunAsrCatalog.runtime, FunAsrCatalog.vad]
             + FunAsrCatalog.models.flatMap(\.artifacts) {
             XCTAssertTrue(artifact.url.absoluteString.hasPrefix("https://"))
@@ -206,6 +221,13 @@ final class UIContractTests: XCTestCase {
             XCTAssertNotNil(onboardingViews["onboarding.practice.keycap"])
             XCTAssertNotNil(onboardingViews["onboarding.practice.status"])
             XCTAssertNotNil(onboardingViews["onboarding.practice.bars"])
+            let onboardingText = onboarding.window?.contentView.map {
+                allViews(in: $0).compactMap { ($0 as? NSTextField)?.stringValue }
+            } ?? []
+            XCTAssertTrue(onboardingText.contains("使用本地 Qwen3-ASR（推荐）"))
+            XCTAssertTrue(onboardingText.contains {
+                $0.contains("下载 Qwen3-ASR 0.6B")
+            })
             XCTAssertEqual(onboardingViews["onboarding.practice.step.1"]?.toolTip, "步骤 1，当前步骤")
             XCTAssertEqual(onboardingViews["onboarding.practice.step.2"]?.toolTip, "步骤 2，未开始")
 
@@ -274,7 +296,12 @@ final class UIContractTests: XCTestCase {
             qwenSettings.engine = .funAsr
             qwenSettings.funAsrModelId = FunAsrCatalog.qwen3AsrId
             var qwenModels = LocalModelViewState.defaults
-            qwenModels[qwenModels.count - 1].isInstalled = true
+            guard let qwenIndex = qwenModels.firstIndex(where: {
+                $0.id == FunAsrCatalog.qwen3AsrId
+            }) else {
+                return XCTFail("The Qwen3-ASR 0.6B preview row is missing")
+            }
+            qwenModels[qwenIndex].isInstalled = true
             let qwenController = SettingsWindowController(
                 settings: qwenSettings,
                 runtime: SettingsRuntimeState(localModels: qwenModels),
@@ -286,6 +313,35 @@ final class UIContractTests: XCTestCase {
             })
             XCTAssertTrue(qwenButtons.contains { $0.title == "Active" && !$0.isEnabled })
             qwenController.close()
+        }
+    }
+
+    func testQwen17UsesQwenFamilyPresentation() async {
+        await MainActor.run {
+            var settings = AppSettings()
+            settings.engine = .funAsr
+            settings.funAsrModelId = FunAsrCatalog.qwen3Asr17Id
+            var models = LocalModelViewState.defaults
+            guard let modelIndex = models.firstIndex(where: {
+                $0.id == FunAsrCatalog.qwen3Asr17Id
+            }) else {
+                return XCTFail("The Qwen3-ASR 1.7B preview row is missing")
+            }
+            models[modelIndex].isInstalled = true
+
+            let controller = SettingsWindowController(
+                settings: settings,
+                runtime: SettingsRuntimeState(localModels: models),
+                actions: SettingsViewActions(save: { _, _ in nil }))
+            let labels = controller.window?.contentView.map {
+                allViews(in: $0).compactMap { ($0 as? NSTextField)?.stringValue }
+            } ?? []
+
+            XCTAssertTrue(labels.contains("Qwen3-ASR (local)"))
+            XCTAssertTrue(labels.contains {
+                $0.contains("Qwen3-ASR auto-detects language")
+            })
+            controller.close()
         }
     }
 

@@ -215,7 +215,7 @@
                         BorderBrush="#ACCCC3"
                         BorderThickness="1"
                         CornerRadius="6"
-                        AutomationProperties.Name="FunASR 本地模型设置">
+                        AutomationProperties.Name="本地模型设置">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="38" />
@@ -235,7 +235,7 @@
                                        FontSize="13"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}"
-                                       Text="使用本地 FunASR（推荐）" />
+                                       Text="使用推荐的本地模型" />
                             <TextBlock x:Name="LocalModelStatusText"
                                        Margin="0,3,0,0"
                                        FontSize="11"
@@ -266,7 +266,7 @@
                                     Margin="8,0,0,0"
                                     Style="{StaticResource PrimaryButton}"
                                     Content="下载并使用"
-                                    AutomationProperties.Name="下载并使用 SenseVoiceSmall 本地模型"
+                                    AutomationProperties.Name="下载并使用推荐的本地模型"
                                     Click="OnInstallLocalModelClick" />
                         </StackPanel>
                     </Grid>
@@ -721,8 +721,9 @@
                         <StackPanel Grid.Column="1" Margin="12,0,15,0" VerticalAlignment="Center">
                             <TextBlock FontFamily="Bahnschrift, Segoe UI" FontSize="15" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextBrush}" Text="可选的语音与输入设置" />
-                            <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
-                                       Text="当前使用 SenseVoiceSmall 本地模型；也可在设置中切换其他 FunASR 模型、云端引擎、语言和热键。"
+                            <TextBlock x:Name="CompletionLocalModelText"
+                                       Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                       Text="当前使用推荐的本地模型；也可在设置中切换其他本地模型、云端引擎、语言和热键。"
                                        TextWrapping="Wrap" />
                         </StackPanel>
                         <Button x:Name="CompletionOpenSettingsButton"

@@ -400,7 +400,16 @@ public sealed class SettingsWindowLayoutTests
             string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
             Assert.Contains("987 MB", qwenMetadata, StringComparison.Ordinal);
             Assert.Contains("EN, ZH, JA, KO, VI", qwenMetadata, StringComparison.Ordinal);
+            Assert.Contains("Recommended", qwenMetadata, StringComparison.Ordinal);
             Assert.DoesNotContain("ZH, ZH", qwenMetadata, StringComparison.Ordinal);
+            TextBlock qwen17Title = Descendants<TextBlock>(window)
+                .Single(text => text.Text == "Qwen3-ASR 1.7B");
+            Border qwen17Card = Ancestor<Border>(qwen17Title);
+            string qwen17Metadata = string.Join(
+                " ", Descendants<TextBlock>(qwen17Card).Select(text => text.Text));
+            Assert.Contains("2.4 GB", qwen17Metadata, StringComparison.Ordinal);
+            Assert.Contains("EN, ZH, JA, KO, VI", qwen17Metadata, StringComparison.Ordinal);
+            Assert.DoesNotContain("Recommended", qwen17Metadata, StringComparison.Ordinal);
             Button download = Descendants<Button>(qwenCard)
                 .Single(button => button.Content is string label
                     && label.StartsWith("Download", StringComparison.Ordinal));
@@ -644,7 +653,7 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(0, modelSelectionPage.ScrollableHeight);
         engineList.SelectedIndex = 3;
         Assert.Equal(Visibility.Visible, localModels.Visibility);
-        Assert.Contains("Download SenseVoiceSmall", selectionStatus.Text, StringComparison.Ordinal);
+        Assert.Contains("Download Qwen3-ASR 0.6B", selectionStatus.Text, StringComparison.Ordinal);
         var overviewLocalModel = Assert.IsType<StackPanel>(window.FindName("OverviewLocalModelPanel"));
         var overviewLocalReadiness = Assert.IsType<StackPanel>(window.FindName("OverviewLocalReadinessPanel"));
         var overviewLlm = Assert.IsType<StackPanel>(window.FindName("OverviewLlmPanel"));
@@ -653,14 +662,14 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(1, Grid.GetColumn(overviewLlm));
         Assert.Equal(1, Grid.GetColumnSpan(overviewLlm));
         Assert.Contains(
-            "Download SenseVoiceSmall to continue",
+            "Download Qwen3-ASR 0.6B to continue",
             Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,
             StringComparison.Ordinal);
         Assert.False(Assert.IsType<Button>(window.FindName("SaveButton")).IsEnabled);
         Assert.Equal(
             Color.FromRgb(255, 250, 240),
             Assert.IsType<SolidColorBrush>(selectionStatusBorder.Background).Color);
-        Assert.Equal(4, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
+        Assert.Equal(5, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
         Assert.DoesNotContain(
             Descendants<TextBlock>(localModels).Where(text => text.Visibility == Visibility.Visible),
             text => text.Text == "Selected");

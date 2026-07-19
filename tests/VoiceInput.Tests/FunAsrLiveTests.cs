@@ -15,8 +15,9 @@ public sealed class FunAsrLiveTests
 
         Assert.True(manager.IsInstalled(FunAsrModelCatalog.DefaultId));
         FunAsrResolvedModel resolved = manager.Resolve(FunAsrModelCatalog.DefaultId);
-        Assert.True(File.Exists(resolved.ExecutablePath));
-        Assert.True(File.Exists(resolved.VadPath));
+        Assert.Equal(FunAsrRunnerKind.Qwen3Asr, resolved.Definition.Runner);
+        Assert.Empty(resolved.ExecutablePath);
+        Assert.Empty(resolved.VadPath);
         Assert.All(resolved.ArtifactPaths.Values, path => Assert.True(File.Exists(path)));
     }
 }

@@ -61,6 +61,12 @@ public partial class FirstRunWindow : Window
         };
 
         PttKeyText.Text = pttDisplay;
+        AutomationProperties.SetName(
+            InstallLocalModelButton,
+            $"下载并使用 {FunAsrModelCatalog.Default.DisplayName} 本地模型");
+        CompletionLocalModelText.Text =
+            $"当前使用 {FunAsrModelCatalog.Default.DisplayName} 本地模型；"
+            + "也可在设置中切换其他本地模型、云端引擎、语言和热键。";
         _loadingModeSelection = true;
         HoldModeRadio.IsChecked = _pttMode == PttMode.Hold;
         ToggleModeRadio.IsChecked = _pttMode == PttMode.Toggle;
@@ -263,7 +269,8 @@ public partial class FirstRunWindow : Window
             FunAsrInstallStage.Downloading => $"正在下载 {package}",
             FunAsrInstallStage.Verifying => $"正在校验 {package}",
             FunAsrInstallStage.Testing => "正在测试本地识别引擎",
-            FunAsrInstallStage.Installed => "SenseVoiceSmall 已安装并通过测试。",
+            FunAsrInstallStage.Installed =>
+                $"{FunAsrModelCatalog.Default.DisplayName} 已安装并通过测试。",
             FunAsrInstallStage.Failed => $"安装失败：{progress.Error}",
             _ => LocalModelStatusText.Text,
         };
@@ -315,10 +322,11 @@ public partial class FirstRunWindow : Window
         if (_recognitionReady)
         {
             LocalModelSetupPanel.Visibility = Visibility.Collapsed;
-            LocalModelInlineStatusText.Text = "SenseVoiceSmall 已就绪";
+            LocalModelInlineStatusText.Text = $"{FunAsrModelCatalog.Default.DisplayName} 已就绪";
             LocalModelInlineStatusText.Foreground = Brush("SuccessBrush");
             LocalModelTitleText.Text = "本地模型已就绪";
-            LocalModelStatusText.Text = "SenseVoiceSmall 将在本机完成识别，语音不会上传。";
+            LocalModelStatusText.Text =
+                $"{FunAsrModelCatalog.Default.DisplayName} 将在本机完成识别，语音不会上传。";
             InstallLocalModelButton.Visibility = Visibility.Collapsed;
             CancelLocalModelInstallButton.Visibility = Visibility.Collapsed;
             LocalModelProgressBar.Visibility = Visibility.Collapsed;
@@ -331,9 +339,11 @@ public partial class FirstRunWindow : Window
         LocalModelSetupPanel.Visibility = Visibility.Visible;
         LocalModelInlineStatusText.Text = _installing ? "正在安装本地模型" : "先完成上方模型安装";
         LocalModelInlineStatusText.Foreground = Brush("AmberBrush");
-        LocalModelTitleText.Text = _installing ? "正在准备本地识别" : "使用本地 FunASR（推荐）";
+        LocalModelTitleText.Text = _installing
+            ? "正在准备本地识别"
+            : $"使用本地 {FunAsrModelCatalog.Default.DisplayName}（推荐）";
         LocalModelStatusText.Text = _installError
-            ?? $"下载 SenseVoiceSmall 与 CPU 运行时，共约 {FormatSize(DefaultPackageSize)}。";
+            ?? DefaultDownloadDescription;
         InstallLocalModelButton.Content = _installError is null ? "下载并使用" : "重新下载";
         InstallLocalModelButton.Visibility = _installing ? Visibility.Collapsed : Visibility.Visible;
         CancelLocalModelInstallButton.Visibility = _installing ? Visibility.Visible : Visibility.Collapsed;
@@ -348,9 +358,16 @@ public partial class FirstRunWindow : Window
         AutomationProperties.SetName(SkipButton, "改用准确率较低的 Windows 听写");
     }
 
-    private static long DefaultPackageSize => FunAsrModelCatalog.Runtime.Size
-        + FunAsrModelCatalog.Vad.Size
-        + FunAsrModelCatalog.Default.DownloadSize;
+    private static long DefaultPackageSize => FunAsrModelCatalog.Default.DownloadSize
+        + (FunAsrModelCatalog.Default.UsesFunAsrRuntime
+            ? FunAsrModelCatalog.Runtime.Size + FunAsrModelCatalog.Vad.Size
+            : 0);
+
+    private static string DefaultDownloadDescription =>
+        FunAsrModelCatalog.Default.UsesFunAsrRuntime
+            ? $"下载 {FunAsrModelCatalog.Default.DisplayName}、CPU 运行时与 VAD，共约 "
+                + $"{FormatSize(DefaultPackageSize)}。"
+            : $"下载 {FunAsrModelCatalog.Default.DisplayName}，共约 {FormatSize(DefaultPackageSize)}。";
 
     private static string FormatSize(long size) => size >= 1_000_000_000
         ? $"{size / 1_000_000_000d:F2} GB"

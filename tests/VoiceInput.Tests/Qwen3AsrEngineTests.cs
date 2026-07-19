@@ -75,13 +75,15 @@ public sealed class Qwen3AsrEngineTests
         Assert.Contains("decode failed", fault?.Detail);
     }
 
-    [Fact]
-    public async Task RejectsAudioThatWouldOverflowTheFixedDecoderContext()
+    [Theory]
+    [InlineData(FunAsrModelCatalog.Qwen3AsrId)]
+    [InlineData(FunAsrModelCatalog.Qwen3Asr17BId)]
+    public async Task RejectsAudioThatWouldOverflowTheFixedDecoderContext(string modelId)
     {
         int calls = 0;
         SpeechFault? fault = null;
         using var engine = new Qwen3AsrEngine(
-            Resolved(),
+            Resolved(modelId),
             (_, _, _, _, _) =>
             {
                 calls++;
@@ -96,6 +98,7 @@ public sealed class Qwen3AsrEngineTests
 
         Assert.Equal(0, calls);
         Assert.Equal(SpeechFaultKind.Service, fault?.Kind);
+        Assert.Contains(FunAsrModelCatalog.Get(modelId).DisplayName, fault?.UserMessage);
         Assert.Contains($"{Qwen3AsrEngine.MaxAudioSeconds} seconds", fault?.UserMessage);
     }
 
@@ -119,6 +122,17 @@ public sealed class Qwen3AsrEngineTests
     [InlineData(16, 4)]
     public void ChoosesVmFriendlyThreadCount(int processors, int expected) =>
         Assert.Equal(expected, Qwen3AsrRecognizerHost.RecommendedThreadCount(processors));
+
+    [Fact]
+    public void UsesDistinctRecognizerKeysForQwenModelSizes()
+    {
+        string small = Qwen3AsrRecognizerHost.ModelKey(Resolved(FunAsrModelCatalog.Qwen3AsrId));
+        string large = Qwen3AsrRecognizerHost.ModelKey(Resolved(FunAsrModelCatalog.Qwen3Asr17BId));
+
+        Assert.NotEqual(small, large);
+        Assert.Contains(FunAsrModelCatalog.Qwen3AsrId, small, StringComparison.Ordinal);
+        Assert.Contains(FunAsrModelCatalog.Qwen3Asr17BId, large, StringComparison.Ordinal);
+    }
 
     [Fact]
     public void ConvertsPcm16LittleEndianToFloat()
@@ -163,9 +177,9 @@ public sealed class Qwen3AsrEngineTests
         Assert.True(result.Length <= Qwen3AsrRecognizerHost.MaxVocabularyCharacters);
     }
 
-    private static FunAsrResolvedModel Resolved()
+    private static FunAsrResolvedModel Resolved(string modelId = FunAsrModelCatalog.Qwen3AsrId)
     {
-        FunAsrModelDefinition model = FunAsrModelCatalog.Get("qwen3-asr-0.6b-int8");
+        FunAsrModelDefinition model = FunAsrModelCatalog.Get(modelId);
         string root = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", model.Id);
         return new(
             model,
