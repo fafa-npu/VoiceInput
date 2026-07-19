@@ -9,7 +9,7 @@ public enum SpeechEngineKind
     Azure,
     /// <summary>Batch transcription via an Azure AI Foundry gpt-4o-transcribe deployment (Entra auth).</summary>
     GptTranscribe,
-    /// <summary>Batch transcription with an app-managed local FunASR GGUF model.</summary>
+    /// <summary>Batch transcription with an app-managed on-device model.</summary>
     FunAsr,
 }
 
@@ -193,7 +193,7 @@ public sealed class AppSettings
 
     public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
 
-    /// <summary>Stable ID of the app-managed local FunASR model.</summary>
+    /// <summary>Stable ID of the app-managed local model.</summary>
     public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
 
     // --- Azure Speech ---

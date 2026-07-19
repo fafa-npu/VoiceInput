@@ -136,6 +136,23 @@ public sealed class RecognitionVocabularyTests
     }
 
     [Fact]
+    public void EvaluateAppliesVocabularyToQwen3Asr()
+    {
+        var settings = new AppSettings
+        {
+            Engine = SpeechEngineKind.FunAsr,
+            FunAsrModelId = "qwen3-asr-0.6b-int8",
+            RecognitionVocabulary = ["Codex", "Qwen3-ASR"],
+        };
+
+        RecognitionVocabularyEvaluation result = RecognitionVocabulary.Evaluate(settings);
+
+        Assert.Equal(RecognitionVocabularyMode.Prompt, result.Mode);
+        Assert.Equal(RecognitionVocabularyAction.Applied, result.Action);
+        Assert.Equal(["Codex", "Qwen3-ASR"], result.Entries);
+    }
+
+    [Fact]
     public void BuildPromptAddsPrefixAndOneEntryPerLine()
     {
         Assert.Equal(

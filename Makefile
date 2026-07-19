@@ -20,7 +20,7 @@ VERSION  ?= v0.1.0
 GHE_HOST ?= microsoft.ghe.com
 GHE_REPO ?= Zhao-Hua/VoiceInput
 
-.PHONY: build run clean publish sign restore install release
+.PHONY: build run clean publish sign restore install release mac-build mac-test mac-run
 
 restore:
 	dotnet restore $(PROJECT)
@@ -30,6 +30,15 @@ build:
 
 run:
 	dotnet run --project $(PROJECT) -c Debug
+
+mac-test:
+	swift test --package-path src/VoiceInputMac
+
+mac-build:
+	scripts/build-macos.sh
+
+mac-run: mac-build
+	open dist/gujiguji.app
 
 clean:
 	dotnet clean $(PROJECT) -c $(CONFIG) || true

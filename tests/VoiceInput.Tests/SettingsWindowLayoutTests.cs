@@ -233,10 +233,13 @@ public sealed class SettingsWindowLayoutTests
             Assert.Contains("semicolon", separatorHint.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Azure Speech", supported.Text, StringComparison.Ordinal);
             Assert.Contains("GPT-4o Mini Transcribe", supported.Text, StringComparison.Ordinal);
+            Assert.Contains("Qwen3-ASR", supported.Text, StringComparison.Ordinal);
+            Assert.Contains("first 10", supported.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("96", supported.Text, StringComparison.Ordinal);
             Assert.Contains("500", supported.Text, StringComparison.Ordinal);
             Assert.Contains("Windows dictation", unsupported.Text, StringComparison.Ordinal);
             Assert.Contains("GPT-4o Transcribe Diarize", unsupported.Text, StringComparison.Ordinal);
-            Assert.Contains("FunASR", unsupported.Text, StringComparison.Ordinal);
+            Assert.Contains("local models", unsupported.Text, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(
                 "vocabulary",
                 Assert.IsType<string>(diagnosticLogging.Content),
@@ -391,8 +394,15 @@ public sealed class SettingsWindowLayoutTests
             Assert.IsType<ComboBox>(window.FindName("EngineList")).SelectedIndex = 3;
             var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
             Layout(window, content, 720, 520);
-            Button download = Descendants<Button>(window)
-                .First(button => button.Content is string label
+            TextBlock qwenTitle = Descendants<TextBlock>(window)
+                .Single(text => text.Text == "Qwen3-ASR 0.6B");
+            Border qwenCard = Ancestor<Border>(qwenTitle);
+            string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
+            Assert.Contains("987 MB", qwenMetadata, StringComparison.Ordinal);
+            Assert.Contains("EN, ZH, JA, KO, VI", qwenMetadata, StringComparison.Ordinal);
+            Assert.DoesNotContain("ZH, ZH", qwenMetadata, StringComparison.Ordinal);
+            Button download = Descendants<Button>(qwenCard)
+                .Single(button => button.Content is string label
                     && label.StartsWith("Download", StringComparison.Ordinal));
 
             var stopwatch = Stopwatch.StartNew();
@@ -410,11 +420,15 @@ public sealed class SettingsWindowLayoutTests
             Assert.Contains(
                 Descendants<Button>(window),
                 button => Equals(button.Content, "Cancel download"));
+            Assert.All(
+                Descendants<Button>(Assert.IsType<StackPanel>(window.FindName("LocalModelsPanel")))
+                    .Where(button => !Equals(button.Content, "Cancel download")),
+                button => Assert.False(button.IsEnabled));
             ProgressBar visibleProgress = Descendants<ProgressBar>(window)
                 .First(progress => progress.Visibility == Visibility.Visible);
             Assert.Contains(Descendants<TextBlock>(window), text =>
                 text.Visibility == Visibility.Visible
-                && text.Text.Contains(Path.GetFileName(FunAsrModelCatalog.Runtime.RelativePath))
+                && text.Text.Contains("conv_frontend.onnx")
                 && text.Text.Contains("MB"));
             Layout(window, content, 720, 520);
             Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
@@ -646,7 +660,7 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(
             Color.FromRgb(255, 250, 240),
             Assert.IsType<SolidColorBrush>(selectionStatusBorder.Background).Color);
-        Assert.Equal(3, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
+        Assert.Equal(4, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
         Assert.DoesNotContain(
             Descendants<TextBlock>(localModels).Where(text => text.Visibility == Visibility.Visible),
             text => text.Text == "Selected");
@@ -794,6 +808,17 @@ public sealed class SettingsWindowLayoutTests
             foreach (T descendant in Descendants<T>(child))
                 yield return descendant;
         }
+    }
+
+    private static T Ancestor<T>(DependencyObject child) where T : DependencyObject
+    {
+        DependencyObject? current = child;
+        while ((current = VisualTreeHelper.GetParent(current)) is not null)
+        {
+            if (current is T match)
+                return match;
+        }
+        throw new InvalidOperationException($"No {typeof(T).Name} ancestor was found.");
     }
 
     private sealed class OfflineHandler : HttpMessageHandler

@@ -531,10 +531,12 @@ public partial class SettingsWindow : Window
             ? "1 term"
             : $"{vocabulary.AcceptedCount} terms";
 
-        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(
-            _draft.Engine,
-            _draft.TranscribeModelKind);
-        string current = VocabularyEngineDisplay(_draft.Engine, _draft.TranscribeModelKind);
+        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(_draft);
+        bool qwenPrompt = _draft.Engine == SpeechEngineKind.FunAsr
+            && FunAsrModelCatalog.Get(_selectedFunAsrModelId).Runner == FunAsrRunnerKind.Qwen3Asr;
+        string current = _draft.Engine == SpeechEngineKind.FunAsr
+            ? $"{FunAsrModelCatalog.Get(_selectedFunAsrModelId).DisplayName} (local)"
+            : VocabularyEngineDisplay(_draft.Engine, _draft.TranscribeModelKind);
         VocabularyCurrentEngineText.Text = current;
         VocabularyModeText.Text = mode switch
         {
@@ -543,8 +545,11 @@ public partial class SettingsWindow : Window
                     $"First {AzureSpeechEngine.MaxVocabularyPhrases} of {vocabulary.AcceptedCount} terms "
                     + "will be used as an Azure Phrase List",
             RecognitionVocabularyMode.PhraseList => "Used as an Azure Phrase List",
+            RecognitionVocabularyMode.Prompt when qwenPrompt =>
+                $"First {Qwen3AsrRecognizerHost.MaxVocabularyTerms} terms, up to "
+                + $"{Qwen3AsrRecognizerHost.MaxVocabularyCharacters} characters, are used as a Qwen prompt",
             RecognitionVocabularyMode.Prompt => "Used as a transcription prompt",
-            _ => "Not supported. Use Azure Speech, GPT-4o Transcribe, or Mini.",
+            _ => "Not supported. Use Azure Speech, GPT-4o Transcribe, Mini, or Qwen3-ASR.",
         };
         VocabularyModeText.Foreground = mode == RecognitionVocabularyMode.None
             ? AttentionBrush
@@ -602,7 +607,7 @@ public partial class SettingsWindow : Window
         }
 
         FunAsrSummaryText.Text =
-            $"Runtime {FunAsrModelCatalog.RuntimeVersion} · {RuntimeBuild} · "
+            $"FunASR {FunAsrModelCatalog.RuntimeVersion} + sherpa-onnx 1.13.4 · CPU · "
             + $"{installedCount} of {FunAsrModelCatalog.Models.Count} models installed";
     }
 
@@ -684,7 +689,8 @@ public partial class SettingsWindow : Window
             .Where(item => item.Value.Stage is not (
                 FunAsrInstallStage.Installed or FunAsrInstallStage.Failed or FunAsrInstallStage.NotInstalled))
             .Select(item => item.Key)
-            .FirstOrDefault();
+            .FirstOrDefault()
+            ?? _actions.ActiveFunAsrModelId();
         bool installing = installingModelId is not null;
         bool selectionChanged = HasModelSelectionChanged();
         FunAsrModelDefinition localModel = FunAsrModelCatalog.Get(_selectedFunAsrModelId);
@@ -852,7 +858,13 @@ public partial class SettingsWindow : Window
 
     private void RefreshModelRows()
     {
-        string? activeModelId = _actions.ActiveFunAsrModelId();
+        string? installingModelId = _modelProgress
+            .Where(item => item.Value.Stage is not (
+                FunAsrInstallStage.Installed or FunAsrInstallStage.Failed or FunAsrInstallStage.NotInstalled))
+            .Select(item => item.Key)
+            .FirstOrDefault()
+            ?? _actions.ActiveFunAsrModelId();
+        bool installBusy = installingModelId is not null;
         foreach (FunAsrModelDefinition model in FunAsrModelCatalog.Models)
         {
             ModelRow row = _modelRows[model.Id];
@@ -866,7 +878,7 @@ public partial class SettingsWindow : Window
             bool terminal = progress?.Stage is FunAsrInstallStage.Installed
                 or FunAsrInstallStage.Failed
                 or FunAsrInstallStage.NotInstalled;
-            bool installing = !terminal && (model.Id == activeModelId || progress is not null);
+            bool installing = !terminal && (model.Id == installingModelId || progress is not null);
 
             row.Selected.Text = willUse
                 ? active ? "Active" : "Will use after Save"
@@ -920,10 +932,10 @@ public partial class SettingsWindow : Window
                 else
                 {
                     Button use = ActionButton("Use after Save", true, () => UseModel(model.Id));
-                    use.IsEnabled = compatible;
+                    use.IsEnabled = compatible && !installBusy;
                     row.Actions.Children.Add(use);
                     Button remove = ActionButton("Remove", false, () => RemoveModel(model.Id));
-                    remove.IsEnabled = activeModelId is null;
+                    remove.IsEnabled = !installBusy && !active;
                     row.Actions.Children.Add(remove);
                 }
                 continue;
@@ -936,10 +948,12 @@ public partial class SettingsWindow : Window
                     ? "Installation failed"
                     : "Not installed";
             row.Status.Foreground = failed || !compatible ? AttentionBrush : MutedBrush;
-            row.Actions.Children.Add(ActionButton(
+            Button download = ActionButton(
                 failed ? "Retry package" : $"Download package · {FormatSize(LocalPackageSize(model))}",
                 failed,
-                () => _ = InstallModelAsync(model.Id)));
+                () => _ = InstallModelAsync(model.Id));
+            download.IsEnabled = !installBusy;
+            row.Actions.Children.Add(download);
         }
     }
 
@@ -966,7 +980,9 @@ public partial class SettingsWindow : Window
             _modelProgress[modelId] = new(
                 modelId,
                 FunAsrInstallStage.Downloading,
-                Path.GetFileName(FunAsrModelCatalog.Runtime.RelativePath),
+                Path.GetFileName((model.UsesFunAsrRuntime
+                    ? FunAsrModelCatalog.Runtime
+                    : model.Artifacts[0]).RelativePath),
                 0,
                 packageSize);
             RefreshModelRows();
@@ -1039,7 +1055,7 @@ public partial class SettingsWindow : Window
         }
         if (MessageBox.Show(
                 $"Remove {model.DisplayName} from this device?",
-                "Remove FunASR model",
+                "Remove local model",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
@@ -1080,7 +1096,7 @@ public partial class SettingsWindow : Window
                 RefreshDirtyState();
             }
             if (progress.Stage == FunAsrInstallStage.Failed)
-                SetStatus(progress.Error ?? "FunASR installation failed.", ErrorBrush);
+                SetStatus(progress.Error ?? "Local model installation failed.", ErrorBrush);
         });
     }
 
@@ -1218,7 +1234,7 @@ public partial class SettingsWindow : Window
             if (!model.Supports(_draft.Language))
                 return $"{model.DisplayName} does not support {_draft.Language}.";
             if (!_funAsr.HasInstalledFiles(model.Id))
-                return $"Download {model.DisplayName} before selecting FunASR.";
+                return $"Download {model.DisplayName} before selecting local recognition.";
         }
         if (_draft.LlmEnabled && !LlmRefiner.HasConnection(_draft))
         {
@@ -1303,7 +1319,7 @@ public partial class SettingsWindow : Window
     {
         SpeechEngineKind.Azure => "Azure Speech",
         SpeechEngineKind.GptTranscribe => "gpt-4o-transcribe",
-        SpeechEngineKind.FunAsr => "FunASR (local)",
+        SpeechEngineKind.FunAsr => "Local models",
         _ => "Windows dictation",
     };
 
@@ -1343,14 +1359,15 @@ public partial class SettingsWindow : Window
         ", ",
         AppSettings.SupportedLanguages
             .Where(item => model.Supports(item.Code))
-            .Select(item => item.Code.Split('-')[0].ToUpperInvariant()));
+            .Select(item => item.Code.Split('-')[0].ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase));
 
     private static string FormatSize(long size) => size >= 1_000_000_000
         ? $"{size / 1_000_000_000d:F1} GB"
         : $"{size / 1_000_000d:F0} MB";
 
-    private static long LocalPackageSize(FunAsrModelDefinition model) =>
-        FunAsrModelCatalog.Runtime.Size + FunAsrModelCatalog.Vad.Size + model.DownloadSize;
+    private static long LocalPackageSize(FunAsrModelDefinition model) => model.DownloadSize
+        + (model.UsesFunAsrRuntime ? FunAsrModelCatalog.Runtime.Size + FunAsrModelCatalog.Vad.Size : 0);
 
     private static string RuntimeBuild =>
         FunAsrModelCatalog.Runtime.RelativePath.Contains("avx2", StringComparison.OrdinalIgnoreCase)

@@ -3,6 +3,9 @@ bin/
 obj/
 publish/
 artifacts/
+.build/
+dist/
+Vendor/
 
 ## VS / Rider / VS Code
 .vs/

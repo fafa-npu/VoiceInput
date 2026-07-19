@@ -178,7 +178,7 @@ public sealed class SettingsStore
             try { File.Delete(temp); } catch { /* Preserve the original save exception. */ }
         }
 
-        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(s.Engine, modelKind);
+        RecognitionVocabularyMode mode = RecognitionVocabulary.ResolveMode(s);
         string level = modelKind == TranscribeModelKind.Unknown ? "WARN " : string.Empty;
         Log.Write($"{level}Vocabulary settings-save engine={s.Engine} modelKind={modelKind} mode={mode} " +
             $"configured={vocabulary.ConfiguredCount} accepted={vocabulary.AcceptedCount} rejected={vocabulary.RejectedCount}");

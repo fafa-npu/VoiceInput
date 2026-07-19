@@ -183,6 +183,7 @@ public sealed class AppController : IDisposable
 
         _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
         _ = PrewarmEntraAsync();                  // sign in once up front so dictation never triggers a focus-stealing popup
+        PreverifySelectedLocalModel();            // hash large model files without freezing the first PTT UI frame
     }
 
     /// <summary>
@@ -244,6 +245,8 @@ public sealed class AppController : IDisposable
                 // Fragile setup is inside the try so any failure (e.g. no microphone) routes through
                 // AbortInternalAsync and resets _dictating, instead of permanently wedging the app.
                 _overlay!.ShowListening(Preparing());
+
+                await VerifySelectedLocalModelAsync(ct);
 
                 _engine = CreateEngine(out bool azureFellBack);
 
@@ -447,7 +450,14 @@ public sealed class AppController : IDisposable
         if (_engine is not null)
         {
             bool stopped = await TryAwait(_engine.StopAsync(), _engine.StopTimeoutMs);
-            if (!stopped) Log.Write("WARN engine.StopAsync timed out; forcing dispose.");
+            if (!stopped)
+            {
+                Log.Write("WARN engine.StopAsync timed out; forcing dispose.");
+                _speechFault ??= new(
+                    SpeechFaultKind.Timeout,
+                    "Transcription timed out. Try a shorter recording or a faster local model.",
+                    "The native recognizer may continue finishing the discarded request in the background.");
+            }
         }
         DisposeEngine();
     }
@@ -574,11 +584,75 @@ public sealed class AppController : IDisposable
                 if (!_funAsr.IsInstalled(model.Id))
                 {
                     throw new InvalidOperationException(
-                        "Download the selected FunASR model in Setup before using it.");
+                        "Download the selected local model in Settings before using it.");
                 }
-                return new FunAsrEngine(_funAsr.Resolve(model.Id));
+                FunAsrResolvedModel resolved = _funAsr.Resolve(model.Id);
+                return model.Runner == FunAsrRunnerKind.Qwen3Asr
+                    ? new Qwen3AsrEngine(resolved, _funAsr.TranscribeQwen3Async, vocabulary.Entries)
+                    : new FunAsrEngine(resolved);
         }
         return new WindowsSpeechEngine();
+    }
+
+    private async Task VerifySelectedLocalModelAsync(CancellationToken cancellationToken)
+    {
+        if (_settings.Engine != SpeechEngineKind.FunAsr)
+            return;
+        FunAsrModelDefinition model = FunAsrModelCatalog.Get(_settings.FunAsrModelId);
+        if (!_funAsr.HasInstalledFiles(model.Id))
+            return; // CreateEngine reports the normal not-installed error.
+        bool verified = await _funAsr.VerifyInstalledAsync(model.Id).WaitAsync(cancellationToken);
+        if (!verified)
+        {
+            throw new InvalidDataException(
+                $"{model.DisplayName} failed its integrity check. Remove and download the model again in Settings.");
+        }
+    }
+
+    private void PreverifySelectedLocalModel()
+    {
+        if (_settings.Engine != SpeechEngineKind.FunAsr)
+            return;
+        string modelId = FunAsrModelCatalog.NormalizeId(_settings.FunAsrModelId);
+        if (!_funAsr.HasInstalledFiles(modelId))
+            return;
+        _ = _funAsr.VerifyInstalledAsync(modelId).ContinueWith(
+            task =>
+            {
+                if (task.Status == TaskStatus.RanToCompletion)
+                {
+                    Log.Write(task.Result
+                        ? $"Local model verification ready: {modelId}."
+                        : $"WARN local model verification failed: {modelId}.");
+                    if (task.Result
+                        && FunAsrModelCatalog.Get(modelId).Runner == FunAsrRunnerKind.Qwen3Asr)
+                    {
+                        _ = PrewarmQwen3Async(modelId);
+                    }
+                }
+                else if (task.Exception is not null)
+                    Log.Error("Local model background verification", task.Exception.GetBaseException());
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task PrewarmQwen3Async(string modelId)
+    {
+        try
+        {
+            await _funAsr.PrewarmQwen3Async(modelId, CancellationToken.None);
+            Log.Write($"Qwen3-ASR recognizer pre-warmed: {modelId}.");
+        }
+        catch (ObjectDisposedException)
+        {
+            // Normal if the app exits while background preparation is queued.
+        }
+        catch (Exception exception)
+        {
+            Log.Error("Qwen3-ASR background pre-warm", exception);
+        }
     }
 
     private void DisposeEngine()
@@ -798,7 +872,7 @@ public sealed class AppController : IDisposable
     private static string FirstRunRecognitionSummary(AppSettings settings, string modelId) =>
         settings.Engine switch
         {
-            SpeechEngineKind.FunAsr => $"FunASR 本地 · {FunAsrModelCatalog.Get(modelId).DisplayName}",
+            SpeechEngineKind.FunAsr => $"本地模型 · {FunAsrModelCatalog.Get(modelId).DisplayName}",
             SpeechEngineKind.Azure => "Azure Speech 已配置",
             SpeechEngineKind.GptTranscribe => $"GPT-4o Transcribe · {settings.TranscribeModel}",
             _ => "Windows 听写 · 准确率较低",
@@ -985,6 +1059,7 @@ public sealed class AppController : IDisposable
             _settings = updated;
             _store.Save(_settings);
             ApplyActiveProfile(profileChanged);
+            PreverifySelectedLocalModel();
         }, _funAsr, new SettingsWindowActions(
             IsAutoStartEnabled,
             SetAutoStart,

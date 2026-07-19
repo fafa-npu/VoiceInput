@@ -53,6 +53,10 @@ internal sealed class FunAsrRuntimeManager : IDisposable
     private readonly object _verificationGate = new();
     private readonly Dictionary<string, VerifiedFile> _verifiedFiles =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _modelVerificationGate = new();
+    private readonly Dictionary<string, Task<bool>> _modelVerifications =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Qwen3AsrRecognizerHost _qwen3 = new();
 
     public FunAsrRuntimeManager()
         : this(
@@ -92,25 +96,62 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
     public bool HasInstalledFiles(string modelId) => InstallationMatches(modelId, verifyHashes: false);
 
+    /// <summary>
+    /// Verifies large local packages off the UI thread and coalesces concurrent checks for the
+    /// same model. Completed checks are removed; the per-file size/mtime cache keeps later checks
+    /// cheap while still detecting files changed on disk.
+    /// </summary>
+    public Task<bool> VerifyInstalledAsync(string modelId)
+    {
+        string normalizedId = _getModel(modelId).Id;
+        lock (_modelVerificationGate)
+        {
+            if (_modelVerifications.TryGetValue(normalizedId, out Task<bool>? active))
+                return active;
+
+            Task<bool> verification = Task.Run(() => InstallationMatches(normalizedId, verifyHashes: true));
+            _modelVerifications[normalizedId] = verification;
+            _ = verification.ContinueWith(
+                completed =>
+                {
+                    lock (_modelVerificationGate)
+                    {
+                        if (_modelVerifications.TryGetValue(normalizedId, out Task<bool>? current)
+                            && ReferenceEquals(current, completed))
+                        {
+                            _modelVerifications.Remove(normalizedId);
+                        }
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return verification;
+        }
+    }
+
     private bool InstallationMatches(string modelId, bool verifyHashes)
     {
         FunAsrModelDefinition model = _getModel(modelId);
         InstallationManifest manifest = LoadManifest();
-        return manifest.RuntimeVersion == FunAsrModelCatalog.RuntimeVersion
+        bool sharedRuntimeMatches = !model.UsesFunAsrRuntime
+            || manifest.RuntimeVersion == FunAsrModelCatalog.RuntimeVersion
             && string.Equals(manifest.RuntimeSha256, _runtimeArtifact.Sha256, StringComparison.OrdinalIgnoreCase)
             && manifest.Vad is not null
             && manifest.Vad.Matches(_vadArtifact)
+            && (verifyHashes
+                ? ArtifactIsVerified(_vadArtifact)
+                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: true)
+                : ArtifactExists(_vadArtifact)
+                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: false));
+        return sharedRuntimeMatches
             && manifest.Models is not null
             && manifest.Models.TryGetValue(model.Id, out List<InstalledArtifact>? installedArtifacts)
             && installedArtifacts is not null
             && ArtifactsMatch(installedArtifacts, model.Artifacts)
             && (verifyHashes
                 ? model.Artifacts.All(ArtifactIsVerified)
-                    && ArtifactIsVerified(_vadArtifact)
-                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: true)
-                : model.Artifacts.All(ArtifactExists)
-                    && ArtifactExists(_vadArtifact)
-                    && RuntimeFilesMatch(manifest.RuntimeFiles, verifyHashes: false));
+                : model.Artifacts.All(ArtifactExists));
     }
 
     public FunAsrResolvedModel Resolve(string modelId)
@@ -121,6 +162,20 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
     private FunAsrResolvedModel ResolveFiles(FunAsrModelDefinition model)
     {
+        if (model.Runner == FunAsrRunnerKind.Qwen3Asr)
+        {
+            if (!model.Artifacts.All(ArtifactExists))
+                throw new InvalidOperationException($"Local model '{model.Id}' is not installed.");
+            return new(
+                model,
+                string.Empty,
+                string.Empty,
+                model.Artifacts.ToDictionary(
+                    artifact => artifact.RelativePath,
+                    artifact => ResolvePath(artifact.RelativePath),
+                    StringComparer.OrdinalIgnoreCase));
+        }
+
         string executable = model.Runner switch
         {
             FunAsrRunnerKind.SenseVoice => "llama-funasr-sensevoice.exe",
@@ -154,6 +209,12 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         try
         {
             FunAsrModelDefinition model = _getModel(modelId);
+            if (model.Runner == FunAsrRunnerKind.Qwen3Asr)
+            {
+                if (!_qwen3.TryReset())
+                    throw new InvalidOperationException(
+                        "Qwen3-ASR is still finishing a transcription. Wait for it to finish before removing the model.");
+            }
             foreach (FunAsrArtifact artifact in model.Artifacts)
             {
                 string path = ResolvePath(artifact.RelativePath);
@@ -177,7 +238,8 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         try
         {
             FunAsrModelDefinition model = _getModel(modelId);
-            long packageSize = _runtimeArtifact.Size + _vadArtifact.Size + model.DownloadSize;
+            long packageSize = model.DownloadSize
+                + (model.UsesFunAsrRuntime ? _runtimeArtifact.Size + _vadArtifact.Size : 0);
             if (IsInstalled(model.Id))
             {
                 Report(model.Id, FunAsrInstallStage.Installed, string.Empty, packageSize, packageSize);
@@ -187,12 +249,15 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             try
             {
                 long completedBytes = 0;
-                await InstallRuntimeArchiveCoreAsync(
-                    _runtimeArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
-                completedBytes += _runtimeArtifact.Size;
-                await DownloadArtifactAsync(
-                    _vadArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
-                completedBytes += _vadArtifact.Size;
+                if (model.UsesFunAsrRuntime)
+                {
+                    await InstallRuntimeArchiveCoreAsync(
+                        _runtimeArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
+                    completedBytes += _runtimeArtifact.Size;
+                    await DownloadArtifactAsync(
+                        _vadArtifact, model.Id, cancellationToken, completedBytes, packageSize).ConfigureAwait(false);
+                    completedBytes += _vadArtifact.Size;
+                }
                 foreach (FunAsrArtifact artifact in model.Artifacts)
                 {
                     await DownloadArtifactAsync(
@@ -320,7 +385,10 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
         if (File.Exists(finalPath)
             && await MatchesAsync(finalPath, artifact, cancellationToken).ConfigureAwait(false))
+        {
+            RememberVerified(finalPath, artifact);
             return;
+        }
 
         long existing = File.Exists(partPath) ? new FileInfo(partPath).Length : 0;
         if (existing > artifact.Size)
@@ -456,6 +524,7 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         }
 
         File.Move(partPath, finalPath, overwrite: true);
+        RememberVerified(finalPath, artifact);
     }
 
     private bool ArtifactExists(FunAsrArtifact artifact)
@@ -466,6 +535,14 @@ internal sealed class FunAsrRuntimeManager : IDisposable
 
     private bool ArtifactIsVerified(FunAsrArtifact artifact) =>
         FileIsVerified(ResolvePath(artifact.RelativePath), artifact.Size, artifact.Sha256);
+
+    private void RememberVerified(string path, FunAsrArtifact artifact)
+    {
+        var file = new FileInfo(path);
+        var stamp = new VerifiedFile(file.Length, file.LastWriteTimeUtc.Ticks, artifact.Sha256);
+        lock (_verificationGate)
+            _verifiedFiles[path] = stamp;
+    }
 
     private bool RuntimeFilesAreVerified(IReadOnlyCollection<InstalledArtifact>? installed) =>
         RuntimeFilesMatch(installed, verifyHashes: true);
@@ -574,14 +651,17 @@ internal sealed class FunAsrRuntimeManager : IDisposable
     private void MarkInstalled(FunAsrModelDefinition model)
     {
         InstallationManifest manifest = LoadManifest();
-        manifest.RuntimeVersion = FunAsrModelCatalog.RuntimeVersion;
-        manifest.RuntimeSha256 = _runtimeArtifact.Sha256;
-        manifest.RuntimeFiles = RequiredExecutables.Select(executable =>
+        if (model.UsesFunAsrRuntime)
         {
-            string relativePath = Path.Combine("runtime", FunAsrModelCatalog.RuntimeVersion, executable);
-            return InstalledArtifact.FromFile(relativePath, ResolvePath(relativePath));
-        }).ToList();
-        manifest.Vad = InstalledArtifact.From(_vadArtifact);
+            manifest.RuntimeVersion = FunAsrModelCatalog.RuntimeVersion;
+            manifest.RuntimeSha256 = _runtimeArtifact.Sha256;
+            manifest.RuntimeFiles = RequiredExecutables.Select(executable =>
+            {
+                string relativePath = Path.Combine("runtime", FunAsrModelCatalog.RuntimeVersion, executable);
+                return InstalledArtifact.FromFile(relativePath, ResolvePath(relativePath));
+            }).ToList();
+            manifest.Vad = InstalledArtifact.From(_vadArtifact);
+        }
         manifest.Models ??= new(StringComparer.OrdinalIgnoreCase);
         manifest.Models[model.Id] = model.Artifacts.Select(InstalledArtifact.From).ToList();
         SaveManifest(manifest);
@@ -618,9 +698,20 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         File.Move(temporaryPath, path, overwrite: true);
     }
 
-    private static async Task RunSmokeTestAsync(
+    private async Task RunSmokeTestAsync(
         FunAsrResolvedModel resolved, CancellationToken cancellationToken)
     {
+        if (resolved.Definition.Runner == FunAsrRunnerKind.Qwen3Asr)
+        {
+            _ = await _qwen3.TranscribeAsync(
+                resolved,
+                new byte[32_000],
+                "zh-CN",
+                [],
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         string temporaryDirectory = Path.Combine(Path.GetTempPath(), "VoiceInput");
         Directory.CreateDirectory(temporaryDirectory);
         string wavePath = Path.Combine(temporaryDirectory, $"funasr-smoke-{Guid.NewGuid():N}.wav");
@@ -665,8 +756,25 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         return path;
     }
 
+    internal Task<string> TranscribeQwen3Async(
+        FunAsrResolvedModel model,
+        byte[] pcm16kMono,
+        string language,
+        IReadOnlyList<string> vocabulary,
+        CancellationToken cancellationToken) =>
+        _qwen3.TranscribeAsync(model, pcm16kMono, language, vocabulary, cancellationToken);
+
+    internal Task PrewarmQwen3Async(string modelId, CancellationToken cancellationToken)
+    {
+        FunAsrModelDefinition model = _getModel(modelId);
+        return model.Runner == FunAsrRunnerKind.Qwen3Asr
+            ? _qwen3.WarmUpAsync(ResolveFiles(model), cancellationToken)
+            : Task.CompletedTask;
+    }
+
     public void Dispose()
     {
+        _qwen3.Dispose();
         _httpClient.Dispose();
     }
 

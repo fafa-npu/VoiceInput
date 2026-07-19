@@ -1,14 +1,16 @@
 > **Install:** Give Copilot this one-line request: `Install gujiguji on this Windows PC from https://github.com/fafa-npu/VoiceInput. Preserve my existing settings and downloaded models, use the repository's supported installation flow, resolve PowerShell execution-policy and startup-shortcut permission issues, verify any downloaded release against its GitHub SHA-256 digest (or build from source), launch the app, and ask me only when Windows requires a security confirmation.`
 
-# gujiguji (Windows)
+# gujiguji (Windows + macOS)
 
-A system-tray voice input method for Windows. Hold a key while speaking, or press once to start
-and again to stop. gujiguji transcribes the recording and inserts it only if the original window
-and input control still have focus.
+A native tray/menu-bar voice input method. Hold a key while speaking, or press once to start and
+again to stop. gujiguji transcribes the recording and inserts it only if the original window and
+input control still have focus.
 
-Built with **C# / .NET 10 + WPF**, targeting **Windows 10 1903+ / Windows 11**.
+The existing Windows client remains **C# / .NET 10 + WPF**. The macOS client is a separate native
+**Swift + AppKit** target with the same profiles, settings, onboarding, overlay, engines, recovery,
+and privacy behavior.
 
-## Install
+## Install on Windows
 
 The recommended installation is to give Copilot the first-line request above. Copilot can inspect
 the repository, choose the supported release or source-build path, handle PowerShell and shortcut
@@ -43,6 +45,28 @@ powershell -File "$env:LOCALAPPDATA\VoiceInput\uninstall.ps1" -Uninstall
 This also removes `%APPDATA%\VoiceInput` (settings, logs, and encrypted correction samples). Add
 `-KeepUserData` to retain it.
 
+## Build and run on macOS
+
+The first macOS build targets **macOS 15+ on Apple Silicon**. It uses the official universal Azure
+Speech SDK; the pinned local FunASR runtime is currently arm64-only.
+
+```bash
+swift test --package-path src/VoiceInputMac
+scripts/build-macos.sh
+open dist/gujiguji.app
+```
+
+On first launch, allow Microphone, Accessibility, and Input Monitoring. The two-page guide then
+downloads the resumable, SHA-256-verified SenseVoice model or lets you explicitly choose macOS
+Speech. Settings and models live under `~/Library/Application Support/gujiguji`; secrets are stored
+in Keychain and logs under `~/Library/Logs/gujiguji`.
+
+For a signed release, configure a Developer ID certificate and notarytool profile, then run:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=gujiguji scripts/release-macos.sh
+```
+
 ## What makes it different
 
 gujiguji defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
@@ -69,14 +93,13 @@ optional **speech-aware LLM refinement layer** can be configured for:
 - **Two activation behaviors.** Hold the active key and release to transcribe, or press once to
   listen and again to transcribe. Both are chord-aware, so shortcuts such as Right-Ctrl+C still
   work; a watchdog recovers a missed key-up after UAC, lock screen, or another hook interruption.
-  > macOS uses **Fn**; on Windows Fn is firmware-handled and invisible to software, so a standard
-  > key is used.
+  macOS additionally offers **Fn / Globe** and Right Option as configurable keys.
 - **Guided first run.** The setup window recommends and downloads SenseVoiceSmall with visible
   package and byte progress, then teaches the real focused-text-box workflow. Users can explicitly
-  fall back to Windows dictation after an accuracy warning.
+  fall back to the platform built-in speech engine after an accuracy warning.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Four speech engines:** **FunASR** with app-managed local GGUF models (the new-user default,
-  batch), **Windows dictation** (lower accuracy; may use Microsoft's online speech service),
+- **Four speech engines:** app-managed local **FunASR and Qwen3-ASR** models (the new-user default is
+  SenseVoiceSmall; local recognition is batch), the platform built-in engine (**Windows dictation** or **macOS Speech**),
   **Azure Speech** (streaming), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch). Azure
   Speech and gpt-4o-transcribe each support **account-key** or **Microsoft Entra ID** auth.
 - **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
@@ -85,46 +108,55 @@ optional **speech-aware LLM refinement layer** can be configured for:
 - **Capsule overlay** at the configured top or bottom of the active monitor (multi-monitor aware)
   with a live, RMS-driven waveform and the running transcript; grows smoothly and shows the latest
   words. Switching profiles briefly displays the newly active profile.
-- **Target-safe injection.** gujiguji records the original window, process, and focused control,
-  refuses to type after focus changes, and checks every `SendInput` result. Uninserted text is
-  preserved, copied to the clipboard, and available for retry from the tray. Windows security
-  boundaries (for example an elevated app) can still block injection.
-- **Single instance**, **tray-only**, custom mic icon. API keys are DPAPI-encrypted at rest; the
-  log never records transcript text unless you turn on diagnostic logging.
+- **Target-safe injection.** gujiguji records the original process, window, and best available focus
+  anchor, refuses to type after a known focus change, and delivers text through OS keyboard input
+  events so native, Chromium, and Electron editors receive their normal input notifications. macOS
+  verifies the final value through AX when the target exposes it and labels opaque editor delivery as
+  dispatched rather than falsely confirmed. Failed confirmed delivery is preserved, copied to the
+  clipboard, and available for retry from the tray/menu bar. Windows integrity levels and macOS
+  Secure Input can still block injection.
+- **Single instance**, **tray/menu-bar only**, custom mic icon. API keys use DPAPI on Windows and
+  Keychain on macOS; the log never records transcript text unless you enable diagnostic logging.
 
 ## Controls
 
 | Action                   | How                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | **Talk**                 | Use the activation key and behavior configured for the active Profile                |
-| **Switch profile**       | Press **Alt+Shift+G**, or select a Profile from the tray                              |
+| **Switch profile**       | **Alt+Shift+G** (Windows) / **Option+Shift+G** (macOS), or use the tray/menu bar       |
 | **Start**                | Start Menu → **gujiguji**, or it auto-starts at login                               |
 | **Quit**                 | Tray icon → **Quit**                                                                 |
 | **Pause / resume**       | Tray → **Pause / Resume listening**                                                  |
 | **Context-aware refine** | Settings → Language intelligence (off by default)                                    |
 | **Setup**                | Tray → **Settings…**                                                                 |
 
-## Local FunASR
+## Local models
 
 On first launch, the guide selects **SenseVoiceSmall** and offers to download it directly. After
 setup, open **Settings → Model Selection** to install, switch, or remove local models on demand.
 
-| Model | Download | Languages | Intended use |
-| --- | ---: | --- | --- |
-| [SenseVoiceSmall q8](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF) | 254 MB | English, Chinese, Japanese, Korean | Default balanced CPU model |
-| [Paraformer q8](https://huggingface.co/FunAudioLLM/Paraformer-GGUF) | 237 MB | English, Chinese | Faster Chinese/English dictation |
-| [Fun-ASR Nano q4](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF) | 954 MB | English, Chinese, Japanese | Difficult vocabulary and accents |
+| Model | Platform and download | Languages | Intended use |
+| --- | --- | --- | --- |
+| [SenseVoiceSmall q8](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF) | Windows/macOS · 254 MB | English, Chinese, Japanese, Korean | Default balanced CPU model |
+| [Paraformer q8](https://huggingface.co/FunAudioLLM/Paraformer-GGUF) | Windows/macOS · 237 MB | English, Chinese | Faster Chinese/English dictation |
+| [Fun-ASR Nano q4](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF) | Windows/macOS · 954 MB | English, Chinese, Japanese | Difficult vocabulary and accents |
+| [Qwen3-ASR 0.6B](https://github.com/QwenLM/Qwen3-ASR) | Windows int8 ONNX · 987 MB; macOS Q8 GGUF · 850 MB | English, Chinese, Japanese, Korean, Vietnamese | Higher-quality multilingual recognition and automatic language detection |
 
-The first model also downloads the official FunASR llama.cpp Windows x64 runtime (4.7 MB) and a
-shared FSMN-VAD model (1.7 MB). Downloads are resumable and SHA-256 verified before activation.
-The runtime and models live under `%LOCALAPPDATA%\VoiceInput\FunASR` and can be removed from Setup.
+The three FunASR models share the official FunASR llama.cpp runtime (Windows x64 or macOS arm64)
+and an FSMN-VAD model. Qwen3-ASR uses a separate backend and does not download that runtime or VAD.
+All model downloads are resumable and SHA-256 verified before activation, and models can be removed
+from Setup without touching other app settings.
 
-FunASR runs as a hidden native child process. It does not require Python, PyTorch, Docker, or a
-local HTTP server, and it does not open a listening port. Recorded audio is written only to a
-temporary local WAV for the native batch command and deleted when transcription finishes. Local
-GGUF models in this release do not support Vietnamese; use one of the cloud engines for `vi-VN`.
-Model weights use the licenses linked from their Hugging Face model cards; the pinned artifacts in
-this release link to the [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0).
+FunASR runs as a hidden native child process; its temporary local WAV is deleted after each batch.
+Qwen3-ASR stays loaded in-process between dictations: Windows uses sherpa-onnx 1.13.4 on CPU and
+macOS uses transcribe.cpp 0.1.3 with Metal/CPU. Both Qwen backends use automatic language detection.
+Windows accepts a bounded vocabulary prompt (first 10 terms, up to 96 characters) and limits each
+Qwen dictation to 25 seconds so the fixed ONNX context cannot silently truncate it. The macOS
+transcribe.cpp backend does not currently expose native hotword prompting.
+
+No local backend requires Python, PyTorch, Docker, a local HTTP server, or a listening port. The
+three FunASR GGUF models do not support Vietnamese; Qwen3-ASR does. Model weights and runtimes use
+the licenses linked from their source cards; the pinned Qwen and sherpa artifacts are Apache 2.0.
 
 ## Configuration
 
@@ -135,11 +167,16 @@ connection, live refinement, and reviewed learning from locally encrypted correc
 contains language, privacy, startup, update, and logging controls. Saving corrections makes no
 network request. **Review learning** sends them only to the configured language-model endpoint and
 never clears the history automatically.
-Secret fields are DPAPI-encrypted per Windows user in `%APPDATA%\VoiceInput\settings.json`.
+Secret fields are DPAPI-encrypted per Windows user or stored in macOS Keychain.
+
+On macOS, Azure Speech with Microsoft Entra ID also requires the Speech resource's **Region** and
+full **Azure Resource ID** (for example `/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/...`).
+The native Speech SDK uses these to construct Microsoft's required `aad#resource-id#token`
+authorization token; the custom-domain endpoint and tenant remain configured as on Windows.
 
 ## Build (developers)
 
-Needs the **.NET 10 SDK**.
+Windows needs the **.NET 10 SDK**; macOS needs Xcode/Swift 6.
 
 ```bash
 make run        # run from source
@@ -148,6 +185,9 @@ make release VERSION=vX.Y.Z SIGN_PFX=publisher.pfx  # prompts securely for the P
 
 dotnet test tests/VoiceInput.Tests/VoiceInput.Tests.csproj
 dotnet build src/VoiceInput/VoiceInput.csproj -p:EnableWindowsTargeting=true
+
+swift test --package-path src/VoiceInputMac
+scripts/build-macos.sh
 ```
 
 The app shows its version in Settings and offers **Update to vX.Y.Z…** when a newer release exists.
@@ -157,14 +197,15 @@ does not stay running.
 
 ## Notes
 
-- **Windows dictation** generally has lower recognition accuracy than FunASR, especially for
+- **Windows dictation** generally has lower recognition accuracy than the local models, especially for
   Chinese, accents, and technical vocabulary. It may also need _Online speech recognition_ and the
-  matching Windows speech pack. Prefer FunASR for local use or Azure Speech for streaming.
+  matching Windows speech pack. Prefer a local model for offline use or Azure Speech for streaming.
 - **gpt-4o-transcribe** is batch: it transcribes after you release (~0.5–2 s), so there are no live
   partials — but accuracy is highest (zh-CN homophones, tech terms). Needs an Azure AI Foundry
   resource with a `gpt-4o-transcribe` deployment (e.g. in eastus2 / swedencentral).
-- **FunASR** is also batch and CPU-only in this release. Startup and recognition time depend on the
-  selected model, recording length, and the local CPU; no cloud fallback occurs after a local error.
+- **Local recognition** is batch. Startup and recognition time depend on the selected model,
+  recording length, and local hardware; no cloud fallback occurs after a local error. Qwen uses
+  Metal when available on macOS and CPU on Windows.
 - Context reading works for Windows Terminal, most input boxes, and Copilot/Teams; it can't read
   VS Code's editor (Monaco) — there it just falls back to plain refinement.
 - UI Automation context is untrusted input. gujiguji constrains refined output length, rejects

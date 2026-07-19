@@ -265,6 +265,28 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task QwenInstallSkipsFunAsrRuntimeAndVad()
+    {
+        TestCatalog catalog = CreateTestCatalog(FunAsrRunnerKind.Qwen3Asr);
+        var progress = new List<FunAsrInstallProgress>();
+        using var manager = CreateManager(
+            new MappedBytesHandler(catalog.Content),
+            smokeTest: (_, _) => Task.CompletedTask,
+            catalog: catalog);
+        manager.ProgressChanged += update => progress.Add(update);
+
+        await manager.InstallAsync(catalog.Model.Id, CancellationToken.None);
+
+        Assert.True(manager.IsInstalled(catalog.Model.Id));
+        Assert.False(File.Exists(Path.Combine(_root, catalog.Vad.RelativePath)));
+        Assert.False(Directory.Exists(Path.Combine(_root, "runtime")));
+        FunAsrResolvedModel resolved = manager.Resolve(catalog.Model.Id);
+        Assert.Empty(resolved.ExecutablePath);
+        Assert.Empty(resolved.VadPath);
+        Assert.Equal(catalog.Model.DownloadSize, progress.Last().TotalBytes);
+    }
+
+    [Fact]
     public async Task SmokeTestFailureDoesNotMarkModelInstalled()
     {
         TestCatalog catalog = CreateTestCatalog();
@@ -415,7 +437,8 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
         content.Length,
         Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant());
 
-    private static TestCatalog CreateTestCatalog()
+    private static TestCatalog CreateTestCatalog(
+        FunAsrRunnerKind runner = FunAsrRunnerKind.SenseVoice)
     {
         byte[] runtimeContent = RuntimeArchive(
             "llama-funasr-sensevoice.exe",
@@ -431,7 +454,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
             "test-model",
             "Test model",
             "Test model",
-            FunAsrRunnerKind.SenseVoice,
+            runner,
             new HashSet<string>(["zh-CN"], StringComparer.OrdinalIgnoreCase),
             [modelArtifact],
             new("https://example.test/source"),

@@ -80,10 +80,21 @@ internal static class RecognitionVocabulary
             _ => RecognitionVocabularyMode.None,
         };
 
+    internal static RecognitionVocabularyMode ResolveMode(AppSettings settings)
+    {
+        if (settings.Engine == SpeechEngineKind.FunAsr
+            && FunAsrModelCatalog.Get(FunAsrModelCatalog.NormalizeId(settings.FunAsrModelId)).Runner
+                == FunAsrRunnerKind.Qwen3Asr)
+        {
+            return RecognitionVocabularyMode.Prompt;
+        }
+        return ResolveMode(settings.Engine, settings.TranscribeModelKind);
+    }
+
     internal static RecognitionVocabularyEvaluation Evaluate(AppSettings settings)
     {
         RecognitionVocabularyNormalization normalized = Normalize(settings.RecognitionVocabulary);
-        RecognitionVocabularyMode mode = ResolveMode(settings.Engine, settings.TranscribeModelKind);
+        RecognitionVocabularyMode mode = ResolveMode(settings);
         RecognitionVocabularyAction action = normalized.AcceptedCount switch
         {
             0 => RecognitionVocabularyAction.Empty,

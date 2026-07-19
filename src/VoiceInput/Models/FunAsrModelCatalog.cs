@@ -9,6 +9,7 @@ internal enum FunAsrRunnerKind
     SenseVoice,
     Paraformer,
     Nano,
+    Qwen3Asr,
 }
 
 internal sealed record FunAsrModelDefinition(
@@ -22,6 +23,8 @@ internal sealed record FunAsrModelDefinition(
     Uri License)
 {
     public long DownloadSize => Artifacts.Sum(artifact => artifact.Size);
+
+    public bool UsesFunAsrRuntime => Runner != FunAsrRunnerKind.Qwen3Asr;
 
     public bool Supports(string language) => Languages.Contains(language);
 }
@@ -104,6 +107,40 @@ internal static class FunAsrModelCatalog
             ],
             new("https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF"),
             ApacheLicense),
+        new(
+            "qwen3-asr-0.6b-int8",
+            "Qwen3-ASR 0.6B",
+            "High-quality multilingual recognition with vocabulary hints. CPU-only; use clips up to 25 seconds.",
+            FunAsrRunnerKind.Qwen3Asr,
+            Languages("en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN"),
+            [
+                QwenArtifact(
+                    "conv_frontend.onnx",
+                    44_148_281,
+                    "d22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e"),
+                QwenArtifact(
+                    "encoder.int8.onnx",
+                    182_491_662,
+                    "60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9"),
+                QwenArtifact(
+                    "decoder.int8.onnx",
+                    755_914_231,
+                    "4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771"),
+                QwenArtifact(
+                    "tokenizer/merges.txt",
+                    1_671_853,
+                    "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"),
+                QwenArtifact(
+                    "tokenizer/tokenizer_config.json",
+                    12_487,
+                    "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c"),
+                QwenArtifact(
+                    "tokenizer/vocab.json",
+                    2_776_833,
+                    "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
+            ],
+            new("https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25"),
+            ApacheLicense),
     ];
 
     public static FunAsrModelDefinition Default => Models[0];
@@ -117,4 +154,16 @@ internal static class FunAsrModelCatalog
 
     private static IReadOnlySet<string> Languages(params string[] values) =>
         new HashSet<string>(values, StringComparer.OrdinalIgnoreCase);
+
+    private static FunAsrArtifact QwenArtifact(string path, long size, string sha256)
+    {
+        const string revision = "68818b2313fe77bd06f6a7c5068ff3ef59d02b8a";
+        const string repository = "csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25";
+        string relativePath = $"models/qwen3-asr-0.6b-int8/{path}";
+        return new(
+            relativePath,
+            new($"https://huggingface.co/{repository}/resolve/{revision}/{path}"),
+            size,
+            sha256);
+    }
 }

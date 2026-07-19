@@ -33,6 +33,7 @@
     <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.43.0" />
     <PackageReference Include="Azure.Identity" Version="1.17.2" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.4" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UpdateSignerCertificateSha256)' != ''">

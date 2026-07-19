@@ -345,7 +345,7 @@
                             <ComboBoxItem Tag="Windows" Content="Windows dictation (built in)" />
                             <ComboBoxItem Tag="Azure" Content="Azure Speech (cloud)" />
                             <ComboBoxItem Tag="GptTranscribe" Content="GPT-4o Transcribe (cloud)" />
-                            <ComboBoxItem Tag="FunAsr" Content="FunASR local models (local)" />
+                            <ComboBoxItem Tag="FunAsr" Content="Local models (on-device)" />
                         </ComboBox>
                     </Grid>
 
@@ -455,7 +455,7 @@
                     <StackPanel x:Name="LocalModelsPanel" Visibility="Collapsed" Margin="0,7,0,0">
                         <Separator Margin="0,0,0,12" />
                         <TextBlock Text="Local models" Style="{StaticResource SectionTitle}" />
-                        <TextBlock Text="Download only when needed. Each package includes the local runtime, voice activity detector, and selected model. Downloading does not change your active model."
+                        <TextBlock Text="Download only when needed. Packages are verified before activation, and downloading does not change your active model."
                                    Foreground="{StaticResource MutedTextBrush}" FontSize="12"
                                    TextWrapping="Wrap" Margin="0,0,0,11" />
                         <Border Background="#F4F8F5" BorderBrush="#BFD2C7" BorderThickness="1"
@@ -771,12 +771,12 @@
                         <TextBlock Grid.Row="0" Text="Supported" Foreground="{StaticResource AccentBrush}"
                                    FontWeight="SemiBold" Margin="0,3,14,8" />
                         <TextBlock x:Name="VocabularySupportedModelsText" Grid.Row="0" Grid.Column="1"
-                                   Text="Azure Speech (Phrase List, first 500), GPT-4o Transcribe and GPT-4o Mini Transcribe (prompt)"
+                                   Text="Azure Speech (Phrase List, first 500), GPT-4o Transcribe, GPT-4o Mini Transcribe, and Qwen3-ASR 0.6B (prompt; first 10 terms, 96 characters)"
                                    TextWrapping="Wrap" Margin="0,3,0,8" />
                         <TextBlock Grid.Row="1" Text="Not supported" Foreground="#8C5709"
                                    FontWeight="SemiBold" Margin="0,3,14,0" />
                         <TextBlock x:Name="VocabularyUnsupportedModelsText" Grid.Row="1" Grid.Column="1"
-                                   Text="Windows dictation, GPT-4o Transcribe Diarize, Other / unknown GPT deployments, and current FunASR local models"
+                                   Text="Windows dictation, GPT-4o Transcribe Diarize, Other / unknown GPT deployments, and other local models"
                                    TextWrapping="Wrap" Margin="0,3,0,0" />
                     </Grid>
                 </StackPanel>

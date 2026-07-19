@@ -18,3 +18,31 @@ jobs:
       - run: dotnet restore src/VoiceInput/VoiceInput.csproj
       - run: dotnet build src/VoiceInput/VoiceInput.csproj -c Release --no-restore
       - run: dotnet test tests/VoiceInput.Tests/VoiceInput.Tests.csproj -c Release
+
+  macos-build-and-test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Test Swift package
+        run: swift test --package-path src/VoiceInputMac
+      - name: Build macOS app bundle
+        run: CONFIG=release scripts/build-macos.sh
+      - name: Verify macOS app bundle
+        shell: zsh
+        run: |
+          set -euo pipefail
+          app=dist/gujiguji.app
+          executable="$app/Contents/MacOS/gujiguji-mac"
+
+          [[ -x "$executable" ]]
+          [[ -f "$app/Contents/Resources/gujiguji.icns" ]]
+          [[ -f "$app/Contents/Resources/ThirdPartyNotices.md" ]]
+          [[ -d "$app/Contents/Frameworks/MicrosoftCognitiveServicesSpeech.framework" ]]
+          [[ -d "$app/Contents/Frameworks/CTranscribe.framework" ]]
+          [[ "$(plutil -extract LSMinimumSystemVersion raw -o - "$app/Contents/Info.plist")" == "15.0" ]]
+          [[ "$(lipo -archs "$executable")" == "arm64" ]]
+          ! otool -l "$executable" | grep -E '/Applications/Xcode\.app/|/\.build/'
+          otool -l "$executable" | grep -F '@executable_path/../Frameworks'
+          otool -L "$executable" | grep -F '@rpath/CTranscribe.framework/'
+          codesign --verify --deep --strict --verbose=2 "$app"

@@ -5,11 +5,11 @@ namespace VoiceInput.Tests;
 public sealed class FunAsrModelCatalogTests
 {
     [Fact]
-    public void DefaultsToSenseVoiceAndHasThreeUniqueModels()
+    public void DefaultsToSenseVoiceAndHasFourUniqueModels()
     {
         Assert.Equal("sensevoice-small-q8", FunAsrModelCatalog.Default.Id);
-        Assert.Equal(3, FunAsrModelCatalog.Models.Count);
-        Assert.Equal(3, FunAsrModelCatalog.Models.Select(model => model.Id).Distinct().Count());
+        Assert.Equal(4, FunAsrModelCatalog.Models.Count);
+        Assert.Equal(4, FunAsrModelCatalog.Models.Select(model => model.Id).Distinct().Count());
     }
 
     [Theory]
@@ -17,9 +17,22 @@ public sealed class FunAsrModelCatalogTests
     [InlineData("sensevoice-small-q8", "ko-KR", true)]
     [InlineData("paraformer-zh-q8", "ja-JP", false)]
     [InlineData("fun-asr-nano-q4", "ja-JP", true)]
+    [InlineData("qwen3-asr-0.6b-int8", "vi-VN", true)]
     public void ReportsLanguageCompatibility(string id, string language, bool expected)
     {
         Assert.Equal(expected, FunAsrModelCatalog.Get(id).Supports(language));
+    }
+
+    [Fact]
+    public void QwenUsesItsOwnSherpaRuntime()
+    {
+        FunAsrModelDefinition model = FunAsrModelCatalog.Get("qwen3-asr-0.6b-int8");
+
+        Assert.Equal(FunAsrRunnerKind.Qwen3Asr, model.Runner);
+        Assert.False(model.UsesFunAsrRuntime);
+        Assert.Equal(6, model.Artifacts.Count);
+        Assert.InRange(model.DownloadSize, 980_000_000, 1_000_000_000);
+        Assert.Contains("csukuangfj2", model.Source.AbsoluteUri, StringComparison.Ordinal);
     }
 
     [Fact]
