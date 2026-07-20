@@ -51,7 +51,7 @@ struct LocalModelViewState: Equatable, Identifiable {
 }
 
 struct SettingsRuntimeState: Equatable {
-    var appVersion = "0.2.14"
+    var appVersion = "0.2.15"
     var localRuntimeSummary = "Local runtimes · Apple silicon"
     var localModels = LocalModelViewState.defaults
     var installingModelId: String?

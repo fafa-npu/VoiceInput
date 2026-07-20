@@ -16,7 +16,7 @@ SIGN_SUBJECT ?=
 TIMESTAMP_URL ?= http://timestamp.digicert.com
 
 # Release (GitHub Enterprise) settings
-VERSION  ?= v0.1.0
+VERSION  ?= v0.2.15
 GHE_HOST ?= microsoft.ghe.com
 GHE_REPO ?= Zhao-Hua/VoiceInput
 

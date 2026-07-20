@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 : "${SIGN_IDENTITY:?Set SIGN_IDENTITY to a Developer ID Application certificate}"
 : "${NOTARY_PROFILE:?Set NOTARY_PROFILE to an xcrun notarytool keychain profile}"
-VERSION="${VERSION:-0.2.14}"
+VERSION="${VERSION:-0.2.15}"
 TAG="v${VERSION#v}"
 
 CONFIG=release VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$ROOT/scripts/build-macos.sh"
