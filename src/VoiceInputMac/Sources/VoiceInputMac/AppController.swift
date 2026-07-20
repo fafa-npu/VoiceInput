@@ -744,7 +744,10 @@ final class AppController: NSObject {
             || (try? FunAsrCatalog.model(selected)).map(localModelInstalled) == true
         let summary: String
         switch settings.engine {
-        case .funAsr: summary = "本地识别 · \((try? FunAsrCatalog.model(selected).displayName) ?? "SenseVoiceSmall")"
+        case .funAsr:
+            let fallback = (try? FunAsrCatalog.model(FunAsrCatalog.defaultId).displayName)
+                ?? "Qwen3-ASR 0.6B"
+            summary = "本地识别 · \((try? FunAsrCatalog.model(selected).displayName) ?? fallback)"
         case .macOS: summary = "macOS Speech · 系统听写"
         case .azure: summary = "Azure Speech 已配置"
         case .gptTranscribe: summary = "GPT Transcribe · \(settings.transcribeModel)"
@@ -758,7 +761,7 @@ final class AppController: NSObject {
             installingLocalModel: installTask != nil,
             installationProgress: progressFraction,
             installationStatus: installProgressStatus
-                ?? "下载 SenseVoiceSmall 与本地运行时，语音不会上传。")
+                ?? "下载 Qwen3-ASR 0.6B（约 850 MB），使用 Metal/CPU 本地识别，语音不会上传。")
     }
 
     private var microphonePermission: OnboardingPermissionState {
@@ -809,8 +812,11 @@ final class AppController: NSObject {
         }
         switch choice {
         case .defaultLocal:
-            guard funAsr.hasInstalledFiles(FunAsrCatalog.defaultId) else {
-                showAlert(title: "Local model not ready", message: "Finish the FunASR download before continuing.")
+            guard let model = try? FunAsrCatalog.model(FunAsrCatalog.defaultId),
+                  localModelInstalled(model) else {
+                showAlert(
+                    title: "Local model not ready",
+                    message: "Finish the Qwen3-ASR 0.6B download before continuing.")
                 return false
             }
             settings.engine = .funAsr
@@ -818,7 +824,7 @@ final class AppController: NSObject {
         case .macOSFallback:
             let alert = NSAlert()
             alert.messageText = "Use macOS Speech instead?"
-            alert.informativeText = "Accuracy can be lower for Chinese, accents, and technical vocabulary. You can install FunASR later in Settings."
+            alert.informativeText = "Accuracy can be lower for Chinese, accents, and technical vocabulary. You can install a local model later in Settings."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "Use macOS Speech")
             alert.addButton(withTitle: "Go back")
@@ -875,7 +881,8 @@ final class AppController: NSObject {
                 LocalModelViewState(id: $0.id, name: $0.displayName, detail: $0.description,
                                     downloadSize: ByteCountFormatter.string(fromByteCount: $0.downloadSize,
                                                                            countStyle: .file),
-                                    isInstalled: localModelInstalled($0))
+                                    isInstalled: localModelInstalled($0),
+                                    isRecommended: $0.id == FunAsrCatalog.defaultId)
             },
             installingModelId: installingModelId,
             installationProgress: progressFraction,

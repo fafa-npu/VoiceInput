@@ -42,8 +42,10 @@ struct FunAsrModel: Codable, Equatable, Identifiable, Sendable {
 }
 
 enum FunAsrCatalog {
-    static let defaultId = "sensevoice-small-q8"
+    static let senseVoiceId = "sensevoice-small-q8"
     static let qwen3AsrId = "qwen3-asr-0.6b-q8"
+    static let qwen3Asr17Id = "qwen3-asr-1.7b-q5km"
+    static let defaultId = qwen3AsrId
     static let runtimeVersion = "v0.1.4"
 
     static let runtime = FunAsrArtifact(
@@ -64,7 +66,7 @@ enum FunAsrCatalog {
 
     static let models: [FunAsrModel] = [
         FunAsrModel(
-            id: defaultId,
+            id: senseVoiceId,
             displayName: "SenseVoiceSmall",
             description: "Balanced local recognition for Chinese, English, Japanese, and Korean.",
             runner: .senseVoice,
@@ -129,6 +131,21 @@ enum FunAsrCatalog {
                 sha256: "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8"
             )],
             source: URL(string: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B")!,
+            license: apache
+        ),
+        FunAsrModel(
+            id: qwen3Asr17Id,
+            displayName: "Qwen3-ASR 1.7B",
+            description: "Larger multilingual recognition model with Metal acceleration and automatic language detection.",
+            runner: .qwen3Asr,
+            languages: ["en-US", "zh-CN", "zh-TW", "ja-JP", "ko-KR", "vi-VN"],
+            artifacts: [FunAsrArtifact(
+                relativePath: "models/qwen3-asr-1.7b-q5km/Qwen3-ASR-1.7B-Q5_K_M.gguf",
+                url: URL(string: "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/92282af1610a2db19d66f2bef1e260f5deca782d/Qwen3-ASR-1.7B-Q5_K_M.gguf")!,
+                size: 1_517_290_464,
+                sha256: "034c557fe92ff8fcd9a9c041cbdaad347be0a86a58d3a348f63cf3f0180879d0"
+            )],
+            source: URL(string: "https://huggingface.co/Qwen/Qwen3-ASR-1.7B")!,
             license: apache
         ),
     ]

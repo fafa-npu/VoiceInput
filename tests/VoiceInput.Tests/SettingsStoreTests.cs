@@ -10,7 +10,7 @@ public sealed class SettingsStoreTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void FreshSettingsRequireOnboardingAndDefaultToLocalFunAsr()
+    public void FreshSettingsRequireOnboardingAndDefaultToLocalQwen()
     {
         var store = new SettingsStore(Path.Combine(_directory, "settings.json"));
 
@@ -18,7 +18,7 @@ public sealed class SettingsStoreTests : IDisposable
         AppSettings settings = store.Load();
         Assert.False(settings.OnboardingCompleted);
         Assert.Equal(SpeechEngineKind.FunAsr, settings.Engine);
-        Assert.Equal(FunAsrModelCatalog.DefaultId, settings.FunAsrModelId);
+        Assert.Equal(FunAsrModelCatalog.Qwen3AsrId, settings.FunAsrModelId);
         Assert.Equal(TranscribeModelKind.Gpt4oTranscribe, settings.TranscribeModelKind);
         Assert.Empty(settings.RecognitionVocabulary);
         Assert.Equal(InputProfile.Profile1Id, settings.ActiveProfileId);
@@ -48,7 +48,7 @@ public sealed class SettingsStoreTests : IDisposable
             ],
             ActiveProfileId = InputProfile.Profile2Id,
             Engine = SpeechEngineKind.FunAsr,
-            FunAsrModelId = "paraformer-zh-q8",
+            FunAsrModelId = FunAsrModelCatalog.SenseVoiceId,
             TranscribeModelKind = TranscribeModelKind.Gpt4oMiniTranscribe,
             RecognitionVocabulary = [" Jaws ", "", "jaws", "Daybreak"],
             LlmEnabled = true,
@@ -75,12 +75,32 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal("Phone", loaded.ActiveProfile.Name);
         Assert.Equal(OverlayPosition.Top, loaded.ActiveProfile.OverlayPosition);
         Assert.Equal(SpeechEngineKind.FunAsr, loaded.Engine);
-        Assert.Equal("paraformer-zh-q8", loaded.FunAsrModelId);
+        Assert.Equal(FunAsrModelCatalog.SenseVoiceId, loaded.FunAsrModelId);
         Assert.Equal(TranscribeModelKind.Gpt4oMiniTranscribe, loaded.TranscribeModelKind);
         Assert.Equal(["Jaws", "Daybreak"], loaded.RecognitionVocabulary);
         Assert.True(loaded.LlmEnabled);
         Assert.True(loaded.DiagnosticLogging);
         Assert.False(File.Exists(path + ".tmp"));
+    }
+
+    [Theory]
+    [InlineData(FunAsrModelCatalog.Qwen3AsrId)]
+    [InlineData(FunAsrModelCatalog.Qwen3Asr17BId)]
+    public void RoundTripsSupportedQwenSelection(string modelId)
+    {
+        string path = Path.Combine(_directory, "qwen-settings.json");
+        var store = new SettingsStore(path);
+        var settings = new AppSettings
+        {
+            Engine = SpeechEngineKind.FunAsr,
+            FunAsrModelId = modelId,
+        };
+
+        store.Save(settings);
+        AppSettings loaded = store.Load();
+
+        Assert.Equal(SpeechEngineKind.FunAsr, loaded.Engine);
+        Assert.Equal(modelId, loaded.FunAsrModelId);
     }
 
     [Fact]
@@ -96,7 +116,7 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void OldSettingsKeepExistingEngineDefaultsAndCompletedOnboarding()
+    public void OldSettingsKeepLegacySenseVoiceAndCompletedOnboarding()
     {
         string path = Path.Combine(_directory, "settings.json");
         Directory.CreateDirectory(_directory);
@@ -111,7 +131,7 @@ public sealed class SettingsStoreTests : IDisposable
         AppSettings loaded = store.Load();
 
         Assert.Equal(SpeechEngineKind.GptTranscribe, loaded.Engine);
-        Assert.Equal(FunAsrModelCatalog.DefaultId, loaded.FunAsrModelId);
+        Assert.Equal(FunAsrModelCatalog.SenseVoiceId, loaded.FunAsrModelId);
         Assert.Equal(PttMode.Hold, loaded.PttMode);
         Assert.True(loaded.OnboardingCompleted);
         Assert.Equal(TranscribeModelKind.Unknown, loaded.TranscribeModelKind);

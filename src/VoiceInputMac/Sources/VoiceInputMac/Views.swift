@@ -8,6 +8,7 @@ struct LocalModelViewState: Equatable, Identifiable {
     var detail: String
     var downloadSize: String
     var isInstalled: Bool
+    var isRecommended = false
 
     static let defaults = [
         LocalModelViewState(
@@ -36,6 +37,14 @@ struct LocalModelViewState: Equatable, Identifiable {
             name: "Qwen3-ASR 0.6B",
             detail: "High-accuracy multilingual recognition with Metal acceleration and automatic language detection.",
             downloadSize: "about 850 MB",
+            isInstalled: false,
+            isRecommended: true
+        ),
+        LocalModelViewState(
+            id: "qwen3-asr-1.7b-q5km",
+            name: "Qwen3-ASR 1.7B",
+            detail: "Larger multilingual recognition model with Metal acceleration and automatic language detection.",
+            downloadSize: "about 1.52 GB",
             isInstalled: false
         ),
     ]
@@ -403,7 +412,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         NSLayoutConstraint.activate([
             statusLabel.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 28),
             statusLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -12),
+            // NSTextField drawing bounds vary slightly across AppKit versions.
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -18),
             buttons.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -28),
             buttons.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
             discardButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
@@ -595,7 +605,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         vocabularySuggestionStatus.setContentHuggingPriority(.defaultLow, for: .horizontal)
         vocabularySuggestionStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let supported = mutedWrappingLabel("macOS Speech and Azure Speech (first 500), GPT-4o Transcribe and GPT-4o Mini Transcribe (prompt)")
-        let unsupported = mutedWrappingLabel("GPT-4o Transcribe Diarize, unknown GPT deployments, FunASR models, and Qwen3-ASR 0.6B")
+        let unsupported = mutedWrappingLabel("GPT-4o Transcribe Diarize, unknown GPT deployments, FunASR models, and Qwen3-ASR models")
         let supportRows = vStack([
             fieldRow("Supported", supported, labelWidth: 112, alignment: .top),
             fieldRow("Not supported", unsupported, labelWidth: 112, alignment: .top),
@@ -786,7 +796,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         case .azure: vocabularyModeText = "Used as an Azure Phrase List"
         case .gptTranscribe where draft.transcribeModelKind == .gpt4oTranscribe || draft.transcribeModelKind == .gpt4oMiniTranscribe:
             vocabularyModeText = "Used as a transcription prompt"
-        case .funAsr where draft.funAsrModelId == FunAsrCatalog.qwen3AsrId:
+        case .funAsr where selectedLocalModelIsQwen:
             vocabularyModeText = "Qwen3-ASR auto-detects language; this runtime has no native hotword prompt"
         default: vocabularyModeText = "The selected engine does not use recognition vocabulary hints"
         }
@@ -823,8 +833,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
             let status = NSTextField(labelWithString: model.isInstalled ? "Installed" : model.downloadSize)
             status.font = .systemFont(ofSize: 11, weight: .semibold)
             status.textColor = model.isInstalled ? ViewPalette.success : ViewPalette.muted
+            var heading: [NSView] = [boldLabel(model.name)]
+            if model.isRecommended {
+                heading.append(smallLabel("Recommended", color: ViewPalette.blue))
+            }
+            heading.append(status)
             let text = vStack([
-                hStack([boldLabel(model.name), status], spacing: 8),
+                hStack(heading, spacing: 8),
                 mutedWrappingLabel(model.detail),
             ], spacing: 3)
             text.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -993,9 +1008,13 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         case .azure: "Azure Speech"
         case .gptTranscribe: "GPT-4o Transcribe"
         case .funAsr:
-            draft.funAsrModelId == FunAsrCatalog.qwen3AsrId
+            selectedLocalModelIsQwen
                 ? "Qwen3-ASR (local)" : "FunASR (local)"
         }
+    }
+
+    private var selectedLocalModelIsQwen: Bool {
+        (try? FunAsrCatalog.model(draft.funAsrModelId).runner) == .qwen3Asr
     }
 }
 
@@ -1023,10 +1042,10 @@ struct OnboardingViewState: Equatable {
     var accessibility: OnboardingPermissionState = .unknown
     var recognitionReady = false
     var usesConfiguredRecognition = false
-    var recognitionSummary = "FunASR 本地 · SenseVoiceSmall"
+    var recognitionSummary = "本地识别 · Qwen3-ASR 0.6B"
     var installingLocalModel = false
     var installationProgress: Double?
-    var installationStatus = "下载 SenseVoiceSmall 与本地运行时，语音不会上传。"
+    var installationStatus = "下载 Qwen3-ASR 0.6B（约 850 MB），使用 Metal/CPU 本地识别，语音不会上传。"
 }
 
 struct OnboardingViewActions {
@@ -1081,7 +1100,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
     private let accessibilityStatus = NSTextField(labelWithString: "")
     private let microphoneButton = NSButton(title: "允许", target: nil, action: nil)
     private let accessibilityButton = NSButton(title: "打开系统设置", target: nil, action: nil)
-    private let modelTitle = NSTextField(labelWithString: "使用本地 FunASR（推荐）")
+    private let modelTitle = NSTextField(labelWithString: "使用本地 Qwen3-ASR（推荐）")
     private let modelStatus = NSTextField(wrappingLabelWithString: "")
     private let modelProgress = NSProgressIndicator()
     private let installButton = NSButton(title: "下载并使用", target: nil, action: nil)
@@ -1421,7 +1440,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
             WaveLogoView(size: 38),
             vStack([
                 boldLabel("可选的语音与输入设置", size: 15),
-                mutedWrappingLabel("也可切换其他 FunASR 模型、云端引擎、语言、Profile 与说话键。"),
+                mutedWrappingLabel("也可切换其他本地模型、云端引擎、语言、Profile 与说话键。"),
             ], spacing: 4), flexibleSpace(), settingsButton,
         ], spacing: 12), fill: .white, border: ViewPalette.line)
         let content = vStack([title, steps, statusItem, optional], spacing: 14)
@@ -1466,7 +1485,7 @@ final class OnboardingWindowController: NSWindowController, NSTextViewDelegate {
         updatePermission(state.microphone, label: microphoneStatus, button: microphoneButton)
         updatePermission(state.accessibility, label: accessibilityStatus, button: accessibilityButton)
         modelStatus.stringValue = state.installationStatus
-        modelTitle.stringValue = state.recognitionReady ? "识别引擎已就绪" : state.installingLocalModel ? "正在准备本地识别" : "使用本地 FunASR（推荐）"
+        modelTitle.stringValue = state.recognitionReady ? "识别引擎已就绪" : state.installingLocalModel ? "正在准备本地识别" : "使用本地 Qwen3-ASR（推荐）"
         installButton.isHidden = state.recognitionReady || state.installingLocalModel || state.usesConfiguredRecognition
         cancelInstallButton.isHidden = !state.installingLocalModel
         modelProgress.isHidden = !state.installingLocalModel

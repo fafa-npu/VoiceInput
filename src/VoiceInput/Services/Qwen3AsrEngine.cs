@@ -102,7 +102,7 @@ internal sealed class Qwen3AsrEngine : ISpeechEngine
         {
             Fault?.Invoke(new(
                 SpeechFaultKind.Service,
-                $"Qwen3-ASR 0.6B supports up to {MaxAudioSeconds} seconds per dictation in this build. "
+                $"{_model.Definition.DisplayName} supports up to {MaxAudioSeconds} seconds per dictation in this build. "
                 + "Please record a shorter segment.",
                 $"Captured {pcm.Length / (double)BytesPerSecond:F1} seconds; the ONNX decoder context is fixed."));
             return;
@@ -244,11 +244,15 @@ internal sealed class Qwen3AsrRecognizerHost : IDisposable
     private OfflineRecognizer GetOrCreateRecognizer(FunAsrResolvedModel model)
     {
         ThrowIfDisposed();
-        string key = string.Join('|', model.ArtifactPaths.OrderBy(item => item.Key).Select(item => item.Value));
+        string key = ModelKey(model);
         if (_recognizer is not null && string.Equals(_modelKey, key, StringComparison.Ordinal))
             return _recognizer;
 
         _recognizer?.Dispose();
+        // Clear the old identity before building the replacement. If native model loading
+        // fails, a later request for the old model must not receive its disposed recognizer.
+        _recognizer = null;
+        _modelKey = null;
         var config = new OfflineRecognizerConfig();
         config.ModelConfig.NumThreads = RecommendedThreadCount(Environment.ProcessorCount);
         config.ModelConfig.Provider = "cpu";
@@ -264,12 +268,16 @@ internal sealed class Qwen3AsrRecognizerHost : IDisposable
 
         _recognizer = new OfflineRecognizer(config);
         _modelKey = key;
-        Log.Write($"Qwen3-ASR recognizer loaded with {config.ModelConfig.NumThreads} CPU thread(s).");
+        Log.Write(
+            $"{model.Definition.DisplayName} recognizer loaded with {config.ModelConfig.NumThreads} CPU thread(s).");
         return _recognizer;
     }
 
     internal static int RecommendedThreadCount(int processorCount) =>
         Math.Clamp(processorCount, 1, 4);
+
+    internal static string ModelKey(FunAsrResolvedModel model) =>
+        string.Join('|', model.ArtifactPaths.OrderBy(item => item.Key).Select(item => item.Value));
 
     internal static string FormatVocabulary(IEnumerable<string> values)
     {
@@ -335,7 +343,7 @@ internal sealed class Qwen3AsrRecognizerHost : IDisposable
         if (result.Any(character => character > 0x7f))
         {
             throw new InvalidOperationException(
-                "Qwen3-ASR 0.6B currently requires an ASCII-compatible Windows model path. "
+                "Qwen3-ASR currently requires an ASCII-compatible Windows model path. "
                 + "Enable 8.3 short file names for the user volume or choose another local model.");
         }
         return result;

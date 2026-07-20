@@ -771,7 +771,7 @@
                         <TextBlock Grid.Row="0" Text="Supported" Foreground="{StaticResource AccentBrush}"
                                    FontWeight="SemiBold" Margin="0,3,14,8" />
                         <TextBlock x:Name="VocabularySupportedModelsText" Grid.Row="0" Grid.Column="1"
-                                   Text="Azure Speech (Phrase List, first 500), GPT-4o Transcribe, GPT-4o Mini Transcribe, and Qwen3-ASR 0.6B (prompt; first 10 terms, 96 characters)"
+                                   Text="Azure Speech (Phrase List, first 500), GPT-4o Transcribe, GPT-4o Mini Transcribe, and Qwen3-ASR models (prompt; first 10 terms, 96 characters)"
                                    TextWrapping="Wrap" Margin="0,3,0,8" />
                         <TextBlock Grid.Row="1" Text="Not supported" Foreground="#8C5709"
                                    FontWeight="SemiBold" Margin="0,3,14,0" />

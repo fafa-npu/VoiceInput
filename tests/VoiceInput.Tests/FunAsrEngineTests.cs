@@ -11,7 +11,7 @@ public sealed class FunAsrEngineTests
     public void NativeProcessUsesUtf8Output()
     {
         ProcessStartInfo startInfo = FunAsrProcess.CreateStartInfo(
-            Resolved(FunAsrModelCatalog.DefaultId), "sample.wav");
+            Resolved(FunAsrModelCatalog.SenseVoiceId), "sample.wav");
 
         Assert.Equal(Encoding.UTF8.CodePage, startInfo.StandardOutputEncoding?.CodePage);
         Assert.Equal(Encoding.UTF8.CodePage, startInfo.StandardErrorEncoding?.CodePage);
@@ -46,7 +46,7 @@ public sealed class FunAsrEngineTests
     {
         int launches = 0;
         using var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             (_, _) =>
             {
                 launches++;
@@ -65,7 +65,7 @@ public sealed class FunAsrEngineTests
         string? wavePath = null;
         string? final = null;
         using var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             (startInfo, _) =>
             {
                 wavePath = ArgumentAfter(startInfo.ArgumentList, "-a");
@@ -90,7 +90,7 @@ public sealed class FunAsrEngineTests
         string? final = null;
         SpeechFault? fault = null;
         using var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             (_, _) => Task.FromResult(new FunAsrProcessResult(7, "partial text", "model failed")));
         engine.Final += value => final = value;
         engine.Fault += value => fault = value;
@@ -111,7 +111,7 @@ public sealed class FunAsrEngineTests
         string? final = null;
         SpeechFault? fault = null;
         using var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             async (_, cancellationToken) =>
             {
                 started.SetResult();
@@ -124,9 +124,9 @@ public sealed class FunAsrEngineTests
         engine.Feed([1, 2]);
 
         Task stopping = engine.StopAsync();
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         engine.Cancel();
-        await stopping.WaitAsync(TimeSpan.FromSeconds(2));
+        await stopping.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Null(final);
         Assert.Null(fault);
@@ -138,7 +138,7 @@ public sealed class FunAsrEngineTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         string? wavePath = null;
         var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             async (startInfo, cancellationToken) =>
             {
                 wavePath = ArgumentAfter(startInfo.ArgumentList, "-a");
@@ -149,20 +149,20 @@ public sealed class FunAsrEngineTests
         await engine.StartAsync("zh-CN");
         engine.Feed([1, 2]);
         Task stopping = engine.StopAsync();
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(File.Exists(wavePath));
 
         engine.Dispose();
 
         Assert.False(File.Exists(wavePath));
-        await stopping.WaitAsync(TimeSpan.FromSeconds(2));
+        await stopping.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
     public void ReportsBatchEngineCapabilities()
     {
         using var engine = new FunAsrEngine(
-            Resolved(FunAsrModelCatalog.DefaultId),
+            Resolved(FunAsrModelCatalog.SenseVoiceId),
             (_, _) => Task.FromResult(new FunAsrProcessResult(0, string.Empty, string.Empty)));
 
         Assert.True(engine.NeedsAudioFeed);

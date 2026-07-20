@@ -284,7 +284,9 @@ public sealed class SettingsStore
         public JsonElement Profiles { get; set; }
         public string ActiveProfileId { get; set; } = InputProfile.Profile1Id;
         public SpeechEngineKind Engine { get; set; } = SpeechEngineKind.Windows;
-        public string FunAsrModelId { get; set; } = FunAsrModelCatalog.DefaultId;
+        // Settings written before model selection existed implicitly used SenseVoice.
+        // Fresh installs are created above with the current catalog default instead.
+        public string FunAsrModelId { get; set; } = FunAsrModelCatalog.SenseVoiceId;
         public string AzureRegion { get; set; } = "eastasia";
         public string AzureKeyEnc { get; set; } = string.Empty;
         public AzureAuthMode AzureAuthMode { get; set; } = AzureAuthMode.Key;

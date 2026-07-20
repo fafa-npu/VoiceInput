@@ -158,7 +158,7 @@ private struct PersistedSettings: Codable {
         value.profiles = profiles ?? value.profiles
         value.activeProfileId = activeProfileId ?? value.activeProfileId
         value.engine = engine ?? value.engine
-        value.funAsrModelId = funAsrModelId ?? value.funAsrModelId
+        value.funAsrModelId = SettingsStore.restoredLocalModelId(funAsrModelId)
         value.azureRegion = azureRegion ?? value.azureRegion
         value.azureAuthMode = azureAuthMode ?? value.azureAuthMode
         value.azureEndpoint = azureEndpoint ?? value.azureEndpoint
@@ -187,9 +187,22 @@ private struct PersistedSettings: Codable {
 }
 
 struct SettingsStore {
+    private let settingsURL: URL
+
+    init(settingsURL: URL = AppPaths.settings) {
+        self.settingsURL = settingsURL
+    }
+
+    /// Settings written before local-model selection existed had no model ID.
+    /// Preserve their historical SenseVoice choice while fresh settings use the
+    /// current catalog default.
+    static func restoredLocalModelId(_ persisted: String?) -> String {
+        persisted ?? FunAsrCatalog.senseVoiceId
+    }
+
     func load() -> AppSettings {
         do {
-            let data = try Data(contentsOf: AppPaths.settings)
+            let data = try Data(contentsOf: settingsURL)
             return try JSONDecoder().decode(PersistedSettings.self, from: data).materialize()
         } catch {
             return AppSettings()
@@ -199,19 +212,20 @@ struct SettingsStore {
     func save(_ settings: AppSettings) throws {
         var normalized = settings
         normalized.normalize()
-        try FileManager.default.createDirectory(at: AppPaths.support, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try KeychainStore.set(normalized.azureKey, for: "azure-key")
         try KeychainStore.set(normalized.transcribeApiKey, for: "transcribe-key")
         try KeychainStore.set(normalized.llmApiKey, for: "llm-key")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(PersistedSettings(normalized))
-        let temporary = AppPaths.settings.appendingPathExtension("tmp")
+        let temporary = settingsURL.appendingPathExtension("tmp")
         try data.write(to: temporary, options: .atomic)
-        if FileManager.default.fileExists(atPath: AppPaths.settings.path) {
-            _ = try FileManager.default.replaceItemAt(AppPaths.settings, withItemAt: temporary)
+        if FileManager.default.fileExists(atPath: settingsURL.path) {
+            _ = try FileManager.default.replaceItemAt(settingsURL, withItemAt: temporary)
         } else {
-            try FileManager.default.moveItem(at: temporary, to: AppPaths.settings)
+            try FileManager.default.moveItem(at: temporary, to: settingsURL)
         }
     }
 }

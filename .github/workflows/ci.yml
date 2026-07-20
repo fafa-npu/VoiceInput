@@ -29,7 +29,7 @@ jobs:
       - name: Build macOS app bundle
         run: CONFIG=release scripts/build-macos.sh
       - name: Verify macOS app bundle
-        shell: zsh
+        shell: zsh {0}
         run: |
           set -euo pipefail
           app=dist/gujiguji.app

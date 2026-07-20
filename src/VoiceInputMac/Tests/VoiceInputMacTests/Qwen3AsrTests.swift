@@ -15,24 +15,27 @@ final class Qwen3AsrTests: XCTestCase {
     }
 
     func testEngineBuffersAudioAndEmitsOneFinalResult() async throws {
-        let recognizer = FakeQwenRecognizer(result: "  自动识别完成  ")
-        let model = try FunAsrCatalog.model(FunAsrCatalog.qwen3AsrId)
-        let engine = Qwen3AsrEngine(model: model, recognizer: recognizer)
-        var final = ""
-        var partialCount = 0
-        engine.onFinal = { final = $0 }
-        engine.onPartial = { _ in partialCount += 1 }
+        for modelId in [FunAsrCatalog.qwen3AsrId, FunAsrCatalog.qwen3Asr17Id] {
+            let recognizer = FakeQwenRecognizer(
+                expectedModelId: modelId, result: "  自动识别完成  ")
+            let model = try FunAsrCatalog.model(modelId)
+            let engine = Qwen3AsrEngine(model: model, recognizer: recognizer)
+            var final = ""
+            var partialCount = 0
+            engine.onFinal = { final = $0 }
+            engine.onPartial = { _ in partialCount += 1 }
 
-        try await engine.start(language: "zh-CN")
-        let chunk = audiblePCM(sampleCount: 8_000)
-        engine.feed(chunk.prefix(7_000))
-        engine.feed(chunk.dropFirst(7_000))
-        await engine.stop()
+            try await engine.start(language: "zh-CN")
+            let chunk = audiblePCM(sampleCount: 8_000)
+            engine.feed(chunk.prefix(7_000))
+            engine.feed(chunk.dropFirst(7_000))
+            await engine.stop()
 
-        XCTAssertEqual(recognizer.recordings, [chunk])
-        XCTAssertEqual(final, "自动识别完成")
-        XCTAssertEqual(partialCount, 0)
-        XCTAssertFalse(engine.hasInterimResults)
+            XCTAssertEqual(recognizer.recordings, [chunk])
+            XCTAssertEqual(final, "自动识别完成")
+            XCTAssertEqual(partialCount, 0)
+            XCTAssertFalse(engine.hasInterimResults)
+        }
     }
 
     func testEngineSkipsShortAudio() async throws {
@@ -47,24 +50,26 @@ final class Qwen3AsrTests: XCTestCase {
         XCTAssertTrue(recognizer.recordings.isEmpty)
     }
 
-    func testRemoveDeletesOnlyManagedQwenArtifact() async throws {
+    func testRemoveDeletesOnlySelectedManagedQwenArtifact() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("qwen-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let model = try FunAsrCatalog.model(FunAsrCatalog.qwen3AsrId)
-        let artifact = try XCTUnwrap(model.artifacts.first)
-        let file = root.appendingPathComponent(artifact.relativePath)
-        try FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        XCTAssertTrue(FileManager.default.createFile(atPath: file.path, contents: nil))
-        let handle = try FileHandle(forWritingTo: file)
-        try handle.truncate(atOffset: UInt64(artifact.size))
-        try handle.close()
-
         let manager = Qwen3AsrRuntimeManager(root: root)
-        XCTAssertTrue(manager.hasInstalledFiles(model.id))
-        try await manager.remove(model.id)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        for modelId in [FunAsrCatalog.qwen3AsrId, FunAsrCatalog.qwen3Asr17Id] {
+            let model = try FunAsrCatalog.model(modelId)
+            let artifact = try XCTUnwrap(model.artifacts.first)
+            let file = root.appendingPathComponent(artifact.relativePath)
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            XCTAssertTrue(FileManager.default.createFile(atPath: file.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: file)
+            try handle.truncate(atOffset: UInt64(artifact.size))
+            try handle.close()
+
+            XCTAssertTrue(manager.hasInstalledFiles(model.id))
+            try await manager.remove(model.id)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        }
     }
 
     private func audiblePCM(sampleCount: Int) -> Data {
@@ -78,16 +83,20 @@ final class Qwen3AsrTests: XCTestCase {
 
 private final class FakeQwenRecognizer: Qwen3AsrTranscribing, @unchecked Sendable {
     private(set) var recordings: [Data] = []
+    private let expectedModelId: String
     private let result: String
 
-    init(result: String) { self.result = result }
+    init(expectedModelId: String = FunAsrCatalog.qwen3AsrId, result: String) {
+        self.expectedModelId = expectedModelId
+        self.result = result
+    }
 
     func transcribe(
         model: FunAsrModel,
         pcm16kMono: Data,
         cancellation: Qwen3AsrCancellation
     ) async throws -> String {
-        XCTAssertEqual(model.id, FunAsrCatalog.qwen3AsrId)
+        XCTAssertEqual(model.id, expectedModelId)
         XCTAssertFalse(cancellation.isCancelled)
         recordings.append(pcm16kMono)
         return result.trimmingCharacters(in: .whitespacesAndNewlines)

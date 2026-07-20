@@ -292,6 +292,8 @@ public sealed class FirstRunWindowLayoutTests
     public void GuideInstallsTheDefaultLocalModelBeforePractice() => RunOnSta(() =>
     {
         int installs = 0;
+        FunAsrArtifact artifact = FunAsrModelCatalog.Default.Artifacts[0];
+        long downloadedBytes = artifact.Size / 2;
         var installed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var window = CreateWindow(
             localModelInstalled: false,
@@ -302,9 +304,9 @@ public sealed class FirstRunWindowLayoutTests
                 report(new(
                     FunAsrModelCatalog.DefaultId,
                     FunAsrInstallStage.Downloading,
-                    "sensevoice-small-q8.gguf",
-                    127_000_000,
-                    254_000_000));
+                    artifact.RelativePath,
+                    downloadedBytes,
+                    artifact.Size));
                 return installed.Task;
             });
         window.Show();
@@ -321,7 +323,13 @@ public sealed class FirstRunWindowLayoutTests
             Assert.False(practiceText.IsEnabled);
             Assert.False(continueButton.IsEnabled);
             Assert.Equal(Visibility.Visible, setupPanel.Visibility);
-            Assert.Contains("SenseVoiceSmall", Assert.IsType<TextBlock>(window.FindName("LocalModelStatusText")).Text);
+            string localModelStatus = Assert.IsType<TextBlock>(
+                window.FindName("LocalModelStatusText")).Text;
+            Assert.Contains(
+                FunAsrModelCatalog.Default.DisplayName,
+                localModelStatus);
+            Assert.Contains("987.0 MB", localModelStatus, StringComparison.Ordinal);
+            Assert.DoesNotContain("CPU 运行时", localModelStatus, StringComparison.Ordinal);
             Layout(window, content, 720, 560);
             Capture(window, captureDirectory, "first-run-local-download-720x560.png");
 
@@ -331,8 +339,10 @@ public sealed class FirstRunWindowLayoutTests
             Assert.Equal(1, installs);
             var progress = Assert.IsType<ProgressBar>(window.FindName("LocalModelProgressBar"));
             Assert.Equal(Visibility.Visible, progress.Visibility);
-            Assert.Equal(50, progress.Value);
-            Assert.Contains("127.0 MB / 254.0 MB", Assert.IsType<TextBlock>(window.FindName("LocalModelProgressText")).Text);
+            Assert.InRange(progress.Value, 49.9, 50.1);
+            Assert.Contains(
+                $"{downloadedBytes / 1_000_000d:F1} MB / {artifact.Size / 1_000_000d:F1} MB",
+                Assert.IsType<TextBlock>(window.FindName("LocalModelProgressText")).Text);
             Capture(window, captureDirectory, "first-run-local-progress-720x560.png");
 
             installed.SetResult();
@@ -486,7 +496,7 @@ public sealed class FirstRunWindowLayoutTests
         PttMode pttMode = PttMode.Hold,
         Action<PttMode>? setPttMode = null,
         bool useConfiguredRecognition = false,
-        string recognitionSummary = "FunASR 本地 · SenseVoiceSmall") => new(
+        string recognitionSummary = "本地模型 · Qwen3-ASR 0.6B") => new(
         "RightCtrl",
         "Right Ctrl",
         pttMode,

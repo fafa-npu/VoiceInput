@@ -967,7 +967,7 @@ public sealed class AppController : IDisposable
                 recognitionReady,
                 useConfiguredRecognition,
                 FirstRunRecognitionSummary(_settings, selectedModelId),
-                InstallDefaultFunAsrForOnboardingAsync,
+                InstallDefaultLocalModelForOnboardingAsync,
                 () => CancelFunAsrInstall(FunAsrModelCatalog.DefaultId),
                 ConfirmWindowsFallback,
                 () => _hook.IsPttGestureChorded,
@@ -986,7 +986,7 @@ public sealed class AppController : IDisposable
 
     private static bool ConfirmWindowsFallback() => MessageBox.Show(
         "Windows 听写的识别准确率较低，尤其是中文、口音和专业词汇。\n\n" +
-        "建议下载并使用 FunASR 本地模型。仍要改用 Windows 听写吗？",
+        "建议下载并使用本地模型。仍要改用 Windows 听写吗？",
         "改用 Windows 听写？",
         MessageBoxButton.YesNo,
         MessageBoxImage.Warning) == MessageBoxResult.Yes;
@@ -1021,7 +1021,7 @@ public sealed class AppController : IDisposable
         return true;
     }
 
-    private async Task InstallDefaultFunAsrForOnboardingAsync(
+    private async Task InstallDefaultLocalModelForOnboardingAsync(
         Action<FunAsrInstallProgress> reportProgress)
     {
         _funAsr.ProgressChanged += reportProgress;

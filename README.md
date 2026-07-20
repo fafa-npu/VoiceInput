@@ -32,9 +32,9 @@ You can also download `VoiceInput.exe` from
 [Releases](https://github.com/fafa-npu/VoiceInput/releases) and run it directly. It is self-contained;
 the .NET runtime is not required.
 
-On first launch, the guide offers to download SenseVoiceSmall, the CPU runtime, and VAD (about
-**260.8 MB** total). The download is resumable. Windows dictation remains available as a
-lower-accuracy fallback.
+On first launch, the Windows guide offers to download **Qwen3-ASR 0.6B int8** (about **987 MB**).
+The download is resumable and does not require the separate FunASR runtime or VAD. Windows
+dictation remains available as a lower-accuracy fallback.
 
 Uninstall:
 
@@ -57,9 +57,10 @@ open dist/gujiguji.app
 ```
 
 On first launch, allow Microphone, Accessibility, and Input Monitoring. The two-page guide then
-downloads the resumable, SHA-256-verified SenseVoice model or lets you explicitly choose macOS
-Speech. Settings and models live under `~/Library/Application Support/gujiguji`; secrets are stored
-in Keychain and logs under `~/Library/Logs/gujiguji`.
+downloads the resumable, SHA-256-verified Qwen3-ASR 0.6B model (about **850 MB**) or lets you
+explicitly choose macOS Speech. Settings and models live under
+`~/Library/Application Support/gujiguji`; secrets are stored in Keychain and logs under
+`~/Library/Logs/gujiguji`.
 
 For a signed release, configure a Developer ID certificate and notarytool profile, then run:
 
@@ -69,7 +70,7 @@ SIGN_IDENTITY="Developer ID Application: …" NOTARY_PROFILE=gujiguji scripts/re
 
 ## What makes it different
 
-gujiguji defaults new users to the app-managed **FunASR SenseVoiceSmall** local model. An
+gujiguji defaults new Windows and macOS users to **Qwen3-ASR 0.6B**. An
 optional **speech-aware LLM refinement layer** can be configured for:
 
 - **Sound-error correction.** The built-in refine prompt knows the input was _spoken_, so it fixes the
@@ -94,12 +95,13 @@ optional **speech-aware LLM refinement layer** can be configured for:
   listen and again to transcribe. Both are chord-aware, so shortcuts such as Right-Ctrl+C still
   work; a watchdog recovers a missed key-up after UAC, lock screen, or another hook interruption.
   macOS additionally offers **Fn / Globe** and Right Option as configurable keys.
-- **Guided first run.** The setup window recommends and downloads SenseVoiceSmall with visible
-  package and byte progress, then teaches the real focused-text-box workflow. Users can explicitly
-  fall back to the platform built-in speech engine after an accuracy warning.
+- **Guided first run.** The setup window recommends Qwen3-ASR 0.6B on both platforms, shows
+  package and byte progress, then teaches the real focused-text-box workflow. Users
+  can explicitly fall back to the platform built-in speech engine after an accuracy warning.
 - **Default Simplified Chinese (zh-CN)**, switchable to English / 繁體中文 / 日本語 / 한국어 / Tiếng Việt.
-- **Four speech engines:** app-managed local **FunASR and Qwen3-ASR** models (the new-user default is
-  SenseVoiceSmall; local recognition is batch), the platform built-in engine (**Windows dictation** or **macOS Speech**),
+- **Four speech engines:** app-managed local **FunASR and Qwen3-ASR** models (both platforms default
+  to Qwen3-ASR 0.6B; local recognition is batch), the platform built-in
+  engine (**Windows dictation** or **macOS Speech**),
   **Azure Speech** (streaming), and **gpt-4o-transcribe** via **Azure AI Foundry** (batch). Azure
   Speech and gpt-4o-transcribe each support **account-key** or **Microsoft Entra ID** auth.
 - **No clipped starts.** The mic is brought live before you're cued to speak and kept warm for a
@@ -132,15 +134,17 @@ optional **speech-aware LLM refinement layer** can be configured for:
 
 ## Local models
 
-On first launch, the guide selects **SenseVoiceSmall** and offers to download it directly. After
-setup, open **Settings → Model Selection** to install, switch, or remove local models on demand.
+On first launch, Windows and macOS select **Qwen3-ASR 0.6B**. After setup, open
+**Settings → Model Selection** to install, switch, or remove local models on demand.
+Qwen3-ASR 1.7B is optional on both platforms and is never downloaded automatically.
 
 | Model | Platform and download | Languages | Intended use |
 | --- | --- | --- | --- |
-| [SenseVoiceSmall q8](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF) | Windows/macOS · 254 MB | English, Chinese, Japanese, Korean | Default balanced CPU model |
+| [SenseVoiceSmall q8](https://huggingface.co/FunAudioLLM/SenseVoiceSmall-GGUF) | Windows/macOS · 254 MB | English, Chinese, Japanese, Korean | Balanced CPU model |
 | [Paraformer q8](https://huggingface.co/FunAudioLLM/Paraformer-GGUF) | Windows/macOS · 237 MB | English, Chinese | Faster Chinese/English dictation |
 | [Fun-ASR Nano q4](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF) | Windows/macOS · 954 MB | English, Chinese, Japanese | Difficult vocabulary and accents |
-| [Qwen3-ASR 0.6B](https://github.com/QwenLM/Qwen3-ASR) | Windows int8 ONNX · 987 MB; macOS Q8 GGUF · 850 MB | English, Chinese, Japanese, Korean, Vietnamese | Higher-quality multilingual recognition and automatic language detection |
+| [Qwen3-ASR 0.6B](https://github.com/QwenLM/Qwen3-ASR) | Windows int8 ONNX · 987 MB; macOS Q8 GGUF · 850 MB | English, Chinese, Japanese, Korean, Vietnamese | Default on both platforms; higher-quality multilingual recognition and automatic language detection |
+| [Qwen3-ASR 1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) | Windows int8 ONNX · 2.40 GB; macOS Q5_K_M GGUF · 1.52 GB | English, Chinese, Japanese, Korean, Vietnamese | Optional accuracy-first model; larger memory footprint and slower CPU inference |
 
 The three FunASR models share the official FunASR llama.cpp runtime (Windows x64 or macOS arm64)
 and an FSMN-VAD model. Qwen3-ASR uses a separate backend and does not download that runtime or VAD.
@@ -152,7 +156,9 @@ Qwen3-ASR stays loaded in-process between dictations: Windows uses sherpa-onnx 1
 macOS uses transcribe.cpp 0.1.3 with Metal/CPU. Both Qwen backends use automatic language detection.
 Windows accepts a bounded vocabulary prompt (first 10 terms, up to 96 characters) and limits each
 Qwen dictation to 25 seconds so the fixed ONNX context cannot silently truncate it. The macOS
-transcribe.cpp backend does not currently expose native hotword prompting.
+transcribe.cpp backend does not currently expose native hotword prompting. The 1.7B model is best
+suited to Apple silicon or a Windows machine with ample RAM; the 0.6B default is substantially more
+practical in CPU-only virtual machines.
 
 No local backend requires Python, PyTorch, Docker, a local HTTP server, or a listening port. The
 three FunASR GGUF models do not support Vietnamese; Qwen3-ASR does. Model weights and runtimes use

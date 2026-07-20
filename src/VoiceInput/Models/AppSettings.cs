@@ -3,7 +3,7 @@ namespace VoiceInput.Models;
 /// <summary>Which speech-to-text backend to use.</summary>
 public enum SpeechEngineKind
 {
-    /// <summary>Windows on-device dictation (Windows.Media.SpeechRecognition). Default; works without an API key.</summary>
+    /// <summary>Windows on-device dictation (Windows.Media.SpeechRecognition); works without an API key.</summary>
     Windows,
     /// <summary>Azure Speech SDK streaming recognition. Best zh-CN quality; requires a key + region.</summary>
     Azure,

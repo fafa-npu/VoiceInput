@@ -135,13 +135,15 @@ public sealed class RecognitionVocabularyTests
         Assert.Equal(125, result.Entries.Length);
     }
 
-    [Fact]
-    public void EvaluateAppliesVocabularyToQwen3Asr()
+    [Theory]
+    [InlineData(FunAsrModelCatalog.Qwen3AsrId)]
+    [InlineData(FunAsrModelCatalog.Qwen3Asr17BId)]
+    public void EvaluateAppliesVocabularyToQwen3Asr(string modelId)
     {
         var settings = new AppSettings
         {
             Engine = SpeechEngineKind.FunAsr,
-            FunAsrModelId = "qwen3-asr-0.6b-int8",
+            FunAsrModelId = modelId,
             RecognitionVocabulary = ["Codex", "Qwen3-ASR"],
         };
 

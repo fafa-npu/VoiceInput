@@ -118,7 +118,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     public void FilesWithoutSuccessfulInstallationDoNotReportInstalled()
     {
         using var manager = CreateManager(new BytesHandler([]));
-        FunAsrModelDefinition model = FunAsrModelCatalog.Default;
+        FunAsrModelDefinition model = FunAsrModelCatalog.Get(FunAsrModelCatalog.SenseVoiceId);
         foreach (FunAsrArtifact artifact in model.Artifacts.Append(FunAsrModelCatalog.Vad))
             CreateSizedFile(artifact.RelativePath, artifact.Size);
 
@@ -132,7 +132,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     public void ResolveUsesRunnerSpecificExecutable()
     {
         using var manager = CreateManager(new BytesHandler([]));
-        FunAsrModelDefinition model = FunAsrModelCatalog.Default;
+        FunAsrModelDefinition model = FunAsrModelCatalog.Get(FunAsrModelCatalog.SenseVoiceId);
         foreach (FunAsrArtifact artifact in model.Artifacts.Append(FunAsrModelCatalog.Vad))
             CreateSizedFile(artifact.RelativePath, artifact.Size);
         CreateRuntimeFiles();
@@ -157,6 +157,23 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
 
         Assert.False(File.Exists(Path.Combine(_root, selected.RelativePath)));
         Assert.True(File.Exists(Path.Combine(_root, other.RelativePath)));
+    }
+
+    [Fact]
+    public void RemovingQwen17PreservesQwen06Artifacts()
+    {
+        using var manager = CreateManager(new BytesHandler([]));
+        FunAsrModelDefinition selected = FunAsrModelCatalog.Get(FunAsrModelCatalog.Qwen3Asr17BId);
+        FunAsrModelDefinition other = FunAsrModelCatalog.Get(FunAsrModelCatalog.Qwen3AsrId);
+        foreach (FunAsrArtifact artifact in selected.Artifacts.Concat(other.Artifacts))
+            CreateSizedFile(artifact.RelativePath, 1);
+
+        manager.Remove(selected.Id);
+
+        Assert.All(selected.Artifacts, artifact =>
+            Assert.False(File.Exists(Path.Combine(_root, artifact.RelativePath))));
+        Assert.All(other.Artifacts, artifact =>
+            Assert.True(File.Exists(Path.Combine(_root, artifact.RelativePath))));
     }
 
     [Fact]

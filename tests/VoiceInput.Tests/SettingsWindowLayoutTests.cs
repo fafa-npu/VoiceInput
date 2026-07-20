@@ -5,6 +5,7 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -173,6 +174,7 @@ public sealed class SettingsWindowLayoutTests
             TranscribeEndpoint = "https://example.test/",
             TranscribeModel = "custom-deployment",
             TranscribeModelKind = TranscribeModelKind.Gpt4oTranscribe,
+            FunAsrModelId = FunAsrModelCatalog.Qwen3AsrId,
             RecognitionVocabulary = ["Existing term"],
         };
         var window = new SettingsWindow(settings, saved => savedSettings = saved, manager, actions)
@@ -318,7 +320,7 @@ public sealed class SettingsWindowLayoutTests
             engine.SelectedIndex = 0;
             Assert.Contains("not supported", mode.Text, StringComparison.OrdinalIgnoreCase);
             engine.SelectedIndex = 3;
-            Assert.Contains("not supported", mode.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Qwen prompt", mode.Text, StringComparison.OrdinalIgnoreCase);
             engine.SelectedIndex = 2;
             modelKind.SelectedIndex = 0;
             Assert.Contains("transcription prompt", mode.Text, StringComparison.OrdinalIgnoreCase);
@@ -394,13 +396,25 @@ public sealed class SettingsWindowLayoutTests
             Assert.IsType<ComboBox>(window.FindName("EngineList")).SelectedIndex = 3;
             var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
             Layout(window, content, 720, 520);
-            TextBlock qwenTitle = Descendants<TextBlock>(window)
+            var modelCards = Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel"));
+            TextBlock qwenTitle = Descendants<TextBlock>(modelCards)
                 .Single(text => text.Text == "Qwen3-ASR 0.6B");
             Border qwenCard = Ancestor<Border>(qwenTitle);
-            string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
+            string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(VisibleText));
             Assert.Contains("987 MB", qwenMetadata, StringComparison.Ordinal);
-            Assert.Contains("EN, ZH, JA, KO, VI", qwenMetadata, StringComparison.Ordinal);
+            foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
+                Assert.Contains(language, qwenMetadata, StringComparison.Ordinal);
+            Assert.Contains("Recommended", qwenMetadata, StringComparison.Ordinal);
             Assert.DoesNotContain("ZH, ZH", qwenMetadata, StringComparison.Ordinal);
+            TextBlock qwen17Title = Descendants<TextBlock>(modelCards)
+                .Single(text => text.Text == "Qwen3-ASR 1.7B");
+            Border qwen17Card = Ancestor<Border>(qwen17Title);
+            string qwen17Metadata = string.Join(
+                " ", Descendants<TextBlock>(qwen17Card).Select(VisibleText));
+            Assert.Contains("2.4 GB", qwen17Metadata, StringComparison.Ordinal);
+            foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
+                Assert.Contains(language, qwen17Metadata, StringComparison.Ordinal);
+            Assert.DoesNotContain("Recommended", qwen17Metadata, StringComparison.Ordinal);
             Button download = Descendants<Button>(qwenCard)
                 .Single(button => button.Content is string label
                     && label.StartsWith("Download", StringComparison.Ordinal));
@@ -644,7 +658,7 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(0, modelSelectionPage.ScrollableHeight);
         engineList.SelectedIndex = 3;
         Assert.Equal(Visibility.Visible, localModels.Visibility);
-        Assert.Contains("Download SenseVoiceSmall", selectionStatus.Text, StringComparison.Ordinal);
+        Assert.Contains("Download Qwen3-ASR 0.6B", selectionStatus.Text, StringComparison.Ordinal);
         var overviewLocalModel = Assert.IsType<StackPanel>(window.FindName("OverviewLocalModelPanel"));
         var overviewLocalReadiness = Assert.IsType<StackPanel>(window.FindName("OverviewLocalReadinessPanel"));
         var overviewLlm = Assert.IsType<StackPanel>(window.FindName("OverviewLlmPanel"));
@@ -653,14 +667,14 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(1, Grid.GetColumn(overviewLlm));
         Assert.Equal(1, Grid.GetColumnSpan(overviewLlm));
         Assert.Contains(
-            "Download SenseVoiceSmall to continue",
+            "Download Qwen3-ASR 0.6B to continue",
             Assert.IsType<TextBlock>(window.FindName("StatusText")).Text,
             StringComparison.Ordinal);
         Assert.False(Assert.IsType<Button>(window.FindName("SaveButton")).IsEnabled);
         Assert.Equal(
             Color.FromRgb(255, 250, 240),
             Assert.IsType<SolidColorBrush>(selectionStatusBorder.Background).Color);
-        Assert.Equal(4, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
+        Assert.Equal(5, Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel")).Children.Count);
         Assert.DoesNotContain(
             Descendants<TextBlock>(localModels).Where(text => text.Visibility == Visibility.Visible),
             text => text.Text == "Selected");
@@ -809,6 +823,9 @@ public sealed class SettingsWindowLayoutTests
                 yield return descendant;
         }
     }
+
+    private static string VisibleText(TextBlock text) =>
+        new TextRange(text.ContentStart, text.ContentEnd).Text;
 
     private static T Ancestor<T>(DependencyObject child) where T : DependencyObject
     {
