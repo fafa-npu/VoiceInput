@@ -173,6 +173,7 @@ public sealed class SettingsWindowLayoutTests
             TranscribeEndpoint = "https://example.test/",
             TranscribeModel = "custom-deployment",
             TranscribeModelKind = TranscribeModelKind.Gpt4oTranscribe,
+            FunAsrModelId = FunAsrModelCatalog.Qwen3AsrId,
             RecognitionVocabulary = ["Existing term"],
         };
         var window = new SettingsWindow(settings, saved => savedSettings = saved, manager, actions)
@@ -318,7 +319,7 @@ public sealed class SettingsWindowLayoutTests
             engine.SelectedIndex = 0;
             Assert.Contains("not supported", mode.Text, StringComparison.OrdinalIgnoreCase);
             engine.SelectedIndex = 3;
-            Assert.Contains("not supported", mode.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Qwen prompt", mode.Text, StringComparison.OrdinalIgnoreCase);
             engine.SelectedIndex = 2;
             modelKind.SelectedIndex = 0;
             Assert.Contains("transcription prompt", mode.Text, StringComparison.OrdinalIgnoreCase);

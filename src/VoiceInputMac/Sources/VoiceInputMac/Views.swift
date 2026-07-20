@@ -412,7 +412,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         NSLayoutConstraint.activate([
             statusLabel.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 28),
             statusLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -12),
+            // NSTextField drawing bounds vary slightly across AppKit versions.
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: buttons.leadingAnchor, constant: -18),
             buttons.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -28),
             buttons.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
             discardButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),

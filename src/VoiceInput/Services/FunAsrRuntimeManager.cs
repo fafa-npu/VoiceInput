@@ -218,8 +218,8 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             foreach (FunAsrArtifact artifact in model.Artifacts)
             {
                 string path = ResolvePath(artifact.RelativePath);
-                File.Delete(path);
-                File.Delete(path + ".part");
+                DeleteIfPresent(path);
+                DeleteIfPresent(path + ".part");
             }
 
             InstallationManifest manifest = LoadManifest();
@@ -229,6 +229,22 @@ internal sealed class FunAsrRuntimeManager : IDisposable
         finally
         {
             _operationGate.Release();
+        }
+    }
+
+    private static void DeleteIfPresent(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (FileNotFoundException)
+        {
+            // An incomplete installation may not contain every catalog artifact.
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // File.Delete throws for a missing parent directory on Windows.
         }
     }
 
