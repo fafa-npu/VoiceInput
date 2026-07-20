@@ -395,7 +395,8 @@ public sealed class SettingsWindowLayoutTests
             Assert.IsType<ComboBox>(window.FindName("EngineList")).SelectedIndex = 3;
             var content = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
             Layout(window, content, 720, 520);
-            TextBlock qwenTitle = Descendants<TextBlock>(window)
+            var modelCards = Assert.IsType<StackPanel>(window.FindName("FunAsrModelsPanel"));
+            TextBlock qwenTitle = Descendants<TextBlock>(modelCards)
                 .Single(text => text.Text == "Qwen3-ASR 0.6B");
             Border qwenCard = Ancestor<Border>(qwenTitle);
             string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
@@ -403,7 +404,7 @@ public sealed class SettingsWindowLayoutTests
             Assert.Contains("EN, ZH, JA, KO, VI", qwenMetadata, StringComparison.Ordinal);
             Assert.Contains("Recommended", qwenMetadata, StringComparison.Ordinal);
             Assert.DoesNotContain("ZH, ZH", qwenMetadata, StringComparison.Ordinal);
-            TextBlock qwen17Title = Descendants<TextBlock>(window)
+            TextBlock qwen17Title = Descendants<TextBlock>(modelCards)
                 .Single(text => text.Text == "Qwen3-ASR 1.7B");
             Border qwen17Card = Ancestor<Border>(qwen17Title);
             string qwen17Metadata = string.Join(
