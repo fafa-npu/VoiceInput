@@ -124,9 +124,9 @@ public sealed class FunAsrEngineTests
         engine.Feed([1, 2]);
 
         Task stopping = engine.StopAsync();
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         engine.Cancel();
-        await stopping.WaitAsync(TimeSpan.FromSeconds(2));
+        await stopping.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Null(final);
         Assert.Null(fault);

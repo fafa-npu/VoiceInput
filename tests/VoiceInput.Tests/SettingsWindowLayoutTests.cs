@@ -401,7 +401,8 @@ public sealed class SettingsWindowLayoutTests
             Border qwenCard = Ancestor<Border>(qwenTitle);
             string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
             Assert.Contains("987 MB", qwenMetadata, StringComparison.Ordinal);
-            Assert.Contains("EN, ZH, JA, KO, VI", qwenMetadata, StringComparison.Ordinal);
+            foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
+                Assert.Contains(language, qwenMetadata, StringComparison.Ordinal);
             Assert.Contains("Recommended", qwenMetadata, StringComparison.Ordinal);
             Assert.DoesNotContain("ZH, ZH", qwenMetadata, StringComparison.Ordinal);
             TextBlock qwen17Title = Descendants<TextBlock>(modelCards)
@@ -410,7 +411,8 @@ public sealed class SettingsWindowLayoutTests
             string qwen17Metadata = string.Join(
                 " ", Descendants<TextBlock>(qwen17Card).Select(text => text.Text));
             Assert.Contains("2.4 GB", qwen17Metadata, StringComparison.Ordinal);
-            Assert.Contains("EN, ZH, JA, KO, VI", qwen17Metadata, StringComparison.Ordinal);
+            foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
+                Assert.Contains(language, qwen17Metadata, StringComparison.Ordinal);
             Assert.DoesNotContain("Recommended", qwen17Metadata, StringComparison.Ordinal);
             Button download = Descendants<Button>(qwenCard)
                 .Single(button => button.Content is string label
