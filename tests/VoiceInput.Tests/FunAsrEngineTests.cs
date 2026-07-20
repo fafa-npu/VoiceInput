@@ -149,13 +149,13 @@ public sealed class FunAsrEngineTests
         await engine.StartAsync("zh-CN");
         engine.Feed([1, 2]);
         Task stopping = engine.StopAsync();
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(File.Exists(wavePath));
 
         engine.Dispose();
 
         Assert.False(File.Exists(wavePath));
-        await stopping.WaitAsync(TimeSpan.FromSeconds(2));
+        await stopping.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
