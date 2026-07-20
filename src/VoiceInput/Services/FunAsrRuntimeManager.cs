@@ -433,6 +433,9 @@ internal sealed class FunAsrRuntimeManager : IDisposable
             throw new IOException($"Not enough disk space to download {Path.GetFileName(artifact.RelativePath)}.");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, artifact.Url);
+        request.Headers.UserAgent.Add(new(
+            "gujiguji",
+            UpdateService.CurrentVersion.ToString()));
         if (existing > 0)
             request.Headers.Range = new RangeHeaderValue(existing, null);
 

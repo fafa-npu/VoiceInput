@@ -25,7 +25,8 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     public async Task DownloadWritesVerifiedArtifactAtomically()
     {
         byte[] content = "verified model"u8.ToArray();
-        using var manager = CreateManager(new BytesHandler(content));
+        var handler = new BytesHandler(content);
+        using var manager = CreateManager(handler);
         var artifact = Artifact(content);
 
         await manager.DownloadArtifactAsync(artifact, CancellationToken.None);
@@ -33,6 +34,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
         string finalPath = Path.Combine(_root, "models", "test.gguf");
         Assert.Equal(content, File.ReadAllBytes(finalPath));
         Assert.False(File.Exists(finalPath + ".part"));
+        Assert.Equal($"gujiguji/{UpdateService.CurrentVersion}", handler.LastUserAgent);
     }
 
     [Fact]
@@ -68,6 +70,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
         await manager.DownloadArtifactAsync(artifact, CancellationToken.None);
 
         Assert.Equal(5, handler.LastRangeFrom);
+        Assert.Equal($"gujiguji/{UpdateService.CurrentVersion}", handler.LastUserAgent);
         Assert.Equal(content, File.ReadAllBytes(Path.Combine(_root, "models", "test.gguf")));
     }
 
@@ -532,6 +535,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
     private sealed class BytesHandler(byte[] content) : HttpMessageHandler
     {
         public long? LastRangeFrom { get; private set; }
+        public string? LastUserAgent { get; private set; }
         public int RequestCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -539,6 +543,7 @@ public sealed class FunAsrRuntimeManagerTests : IDisposable
         {
             RequestCount++;
             LastRangeFrom = request.Headers.Range?.Ranges.Single().From;
+            LastUserAgent = request.Headers.UserAgent.ToString();
             int offset = checked((int)(LastRangeFrom ?? 0));
             var response = new HttpResponseMessage(offset == 0 ? HttpStatusCode.OK : HttpStatusCode.PartialContent)
             {
