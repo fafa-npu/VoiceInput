@@ -5,6 +5,7 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -399,7 +400,7 @@ public sealed class SettingsWindowLayoutTests
             TextBlock qwenTitle = Descendants<TextBlock>(modelCards)
                 .Single(text => text.Text == "Qwen3-ASR 0.6B");
             Border qwenCard = Ancestor<Border>(qwenTitle);
-            string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(text => text.Text));
+            string qwenMetadata = string.Join(" ", Descendants<TextBlock>(qwenCard).Select(VisibleText));
             Assert.Contains("987 MB", qwenMetadata, StringComparison.Ordinal);
             foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
                 Assert.Contains(language, qwenMetadata, StringComparison.Ordinal);
@@ -409,7 +410,7 @@ public sealed class SettingsWindowLayoutTests
                 .Single(text => text.Text == "Qwen3-ASR 1.7B");
             Border qwen17Card = Ancestor<Border>(qwen17Title);
             string qwen17Metadata = string.Join(
-                " ", Descendants<TextBlock>(qwen17Card).Select(text => text.Text));
+                " ", Descendants<TextBlock>(qwen17Card).Select(VisibleText));
             Assert.Contains("2.4 GB", qwen17Metadata, StringComparison.Ordinal);
             foreach (string language in new[] { "EN", "ZH", "JA", "KO", "VI" })
                 Assert.Contains(language, qwen17Metadata, StringComparison.Ordinal);
@@ -822,6 +823,9 @@ public sealed class SettingsWindowLayoutTests
                 yield return descendant;
         }
     }
+
+    private static string VisibleText(TextBlock text) =>
+        new TextRange(text.ContentStart, text.ContentEnd).Text;
 
     private static T Ancestor<T>(DependencyObject child) where T : DependencyObject
     {
