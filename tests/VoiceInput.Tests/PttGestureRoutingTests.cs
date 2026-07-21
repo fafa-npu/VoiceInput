@@ -106,6 +106,28 @@ public sealed class PttGestureRoutingTests
     }
 
     [Theory]
+    [InlineData(true, DictationSessionState.Starting, true)]
+    [InlineData(true, DictationSessionState.Listening, true)]
+    [InlineData(false, DictationSessionState.Starting, false)]
+    [InlineData(false, DictationSessionState.Listening, false)]
+    [InlineData(false, DictationSessionState.Idle, false)]
+    [InlineData(false, DictationSessionState.Cancelled, false)]
+    [InlineData(true, DictationSessionState.Transcribing, false)]
+    [InlineData(true, DictationSessionState.Refining, false)]
+    [InlineData(true, DictationSessionState.Injecting, false)]
+    public void EscapeOnlyCancelsAnActiveRecordingSession(
+        bool dictating,
+        object state,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            AppController.ShouldCancelForEscape(
+                dictating,
+                (DictationSessionState)Convert.ToInt32(state)));
+    }
+
+    [Theory]
     [InlineData(InputProfile.Profile1Id, InputProfile.Profile2Id)]
     [InlineData(InputProfile.Profile2Id, InputProfile.Profile1Id)]
     [InlineData("unknown", InputProfile.Profile2Id)]

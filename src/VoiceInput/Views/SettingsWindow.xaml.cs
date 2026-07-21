@@ -21,7 +21,8 @@ internal sealed record SettingsWindowActions(
     Func<string?> ActiveFunAsrModelId,
     Func<int> CorrectionCount,
     Action ClearCorrections,
-    Func<AppSettings, Task<CorrectionLearningReview>> ReviewCorrections);
+    Func<AppSettings, Task<CorrectionLearningReview>> ReviewCorrections,
+    UpdateService? Updates = null);
 
 public partial class SettingsWindow : Window
 {
@@ -106,11 +107,16 @@ public partial class SettingsWindow : Window
         BuildModelRows();
         AttachDraftHandlers();
         _funAsr.ProgressChanged += OnFunAsrProgress;
+        if (_actions.Updates is { } updates)
+            updates.StatusChanged += OnUpdateStatusChanged;
         Closed += OnClosed;
         _loading = false;
 
         UpdateFieldVisibility();
         RefreshAll();
+        RenderUpdateStatus(_actions.Updates?.Status ?? new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Idle,
+            "Check for updates to keep gujiguji current."));
         if (showLanguageIntelligence)
         {
             VocabularyNav.IsChecked = true;
@@ -1122,36 +1128,38 @@ public partial class SettingsWindow : Window
 
     private async void OnCheckForUpdates(object sender, RoutedEventArgs e)
     {
-        CheckUpdatesButton.IsEnabled = false;
-        InstallUpdateButton.Visibility = Visibility.Collapsed;
-        _availableUpdateTag = null;
-        SetStatus("Checking for updates...", MutedBrush);
+        RenderUpdateStatus(new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Checking,
+            "Checking for updates..."));
         try
         {
             UpdateService.CheckResult result = await _actions.CheckForUpdates();
-            switch (result.Outcome)
+            if (_actions.Updates is not null)
             {
-                case UpdateService.CheckOutcome.UpdateAvailable:
-                    _availableUpdateTag = result.LatestTag;
-                    InstallUpdateButton.Content = $"Update to {result.LatestTag}";
-                    InstallUpdateButton.Visibility = Visibility.Visible;
-                    SetStatus($"{result.LatestTag} is available.", AttentionBrush);
-                    break;
-                case UpdateService.CheckOutcome.UpToDate:
-                    SetStatus($"You're using the latest version (v{UpdateService.CurrentVersion}).", SuccessBrush);
-                    break;
-                case UpdateService.CheckOutcome.CheckFailed:
-                    SetStatus("Update check failed. Please try again.", ErrorBrush);
-                    break;
+                RenderUpdateStatus(_actions.Updates.Status);
+                return;
             }
+
+            RenderUpdateStatus(result.Outcome switch
+            {
+                UpdateService.CheckOutcome.UpdateAvailable => new UpdateService.UpdateStatus(
+                    UpdateService.UpdateStage.Available,
+                    $"{result.LatestTag} is available.",
+                    result.LatestTag),
+                UpdateService.CheckOutcome.UpToDate => new UpdateService.UpdateStatus(
+                    UpdateService.UpdateStage.UpToDate,
+                    $"You're using the latest version (v{UpdateService.CurrentVersion}).",
+                    result.LatestTag),
+                _ => new UpdateService.UpdateStatus(
+                    UpdateService.UpdateStage.Failed,
+                    "Update check failed. Please try again."),
+            });
         }
         catch (Exception exception)
         {
-            SetStatus(exception.Message, ErrorBrush);
-        }
-        finally
-        {
-            CheckUpdatesButton.IsEnabled = true;
+            RenderUpdateStatus(new UpdateService.UpdateStatus(
+                UpdateService.UpdateStage.Failed,
+                exception.Message));
         }
     }
 
@@ -1159,6 +1167,86 @@ public partial class SettingsWindow : Window
     {
         if (_availableUpdateTag is { } tag)
             _actions.InstallUpdate(tag);
+    }
+
+    private void OnUpdateStatusChanged(UpdateService.UpdateStatus status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => OnUpdateStatusChanged(status));
+            return;
+        }
+        if (!_closed)
+            RenderUpdateStatus(status);
+    }
+
+    private void RenderUpdateStatus(UpdateService.UpdateStatus status)
+    {
+        bool busy = status.Stage is UpdateService.UpdateStage.Checking
+            or UpdateService.UpdateStage.Downloading
+            or UpdateService.UpdateStage.Verifying
+            or UpdateService.UpdateStage.PreparingRestart
+            or UpdateService.UpdateStage.Restarting;
+        bool retryDownload = status.Stage == UpdateService.UpdateStage.Failed
+            && !string.IsNullOrWhiteSpace(status.Tag);
+        bool canInstall = status.Stage == UpdateService.UpdateStage.Available || retryDownload;
+
+        _availableUpdateTag = canInstall ? status.Tag : null;
+        CheckUpdatesButton.IsEnabled = !busy;
+        CheckUpdatesButton.Content = status.Stage == UpdateService.UpdateStage.Failed && !retryDownload
+            ? "Try again"
+            : "Check for updates";
+        InstallUpdateButton.Visibility = canInstall || busy && status.Tag is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        InstallUpdateButton.IsEnabled = canInstall;
+        InstallUpdateButton.Content = retryDownload
+            ? $"Retry {status.Tag}"
+            : status.Stage == UpdateService.UpdateStage.Available
+                ? $"Update to {status.Tag}"
+                : status.Stage == UpdateService.UpdateStage.Downloading
+                    ? "Downloading..."
+                    : status.Stage == UpdateService.UpdateStage.Verifying
+                        ? "Verifying..."
+                        : status.Stage == UpdateService.UpdateStage.PreparingRestart
+                            ? "Preparing..."
+                            : status.Stage == UpdateService.UpdateStage.Restarting
+                                ? "Restarting..."
+                                : "Update now";
+
+        bool showProgress = status.Stage is UpdateService.UpdateStage.Checking
+            or UpdateService.UpdateStage.Downloading
+            or UpdateService.UpdateStage.Verifying
+            or UpdateService.UpdateStage.PreparingRestart
+            or UpdateService.UpdateStage.Restarting;
+        UpdateProgressBar.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
+        UpdateProgressBar.IsIndeterminate = showProgress
+            && (status.Stage != UpdateService.UpdateStage.Downloading || status.Percentage is null);
+        UpdateProgressBar.Value = status.Percentage ?? 0;
+
+        UpdateStatusText.Text = status.Stage == UpdateService.UpdateStage.Downloading
+            ? FormatDownloadStatus(status)
+            : status.Message;
+        UpdateStatusText.Foreground = status.Stage switch
+        {
+            UpdateService.UpdateStage.Available => AttentionBrush,
+            UpdateService.UpdateStage.UpToDate => SuccessBrush,
+            UpdateService.UpdateStage.Failed => ErrorBrush,
+            _ => MutedBrush,
+        };
+    }
+
+    private static string FormatDownloadStatus(UpdateService.UpdateStatus status)
+    {
+        double receivedMb = status.BytesReceived / 1024d / 1024d;
+        if (status.TotalBytes is > 0 && status.Percentage is { } percentage)
+        {
+            double totalMb = status.TotalBytes.Value / 1024d / 1024d;
+            return $"{status.Message} {percentage}% ({receivedMb:F1} of {totalMb:F1} MB)";
+        }
+        return status.BytesReceived > 0
+            ? $"{status.Message} ({receivedMb:F1} MB)"
+            : status.Message;
     }
 
     private void OnStartAtLoginChanged(object sender, RoutedEventArgs e)
@@ -1260,6 +1348,8 @@ public partial class SettingsWindow : Window
     {
         _closed = true;
         _funAsr.ProgressChanged -= OnFunAsrProgress;
+        if (_actions.Updates is { } updates)
+            updates.StatusChanged -= OnUpdateStatusChanged;
     }
 
     private void SetStatus(string message, Brush brush)

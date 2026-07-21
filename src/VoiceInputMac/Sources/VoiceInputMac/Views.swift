@@ -50,8 +50,81 @@ struct LocalModelViewState: Equatable, Identifiable {
     ]
 }
 
+enum AppUpdateViewState: Equatable {
+    case idle
+    case checking
+    case upToDate
+    case available(version: String)
+    case downloading(version: String, receivedBytes: Int64, totalBytes: Int64?)
+    case verifying(version: String)
+    case preparing(version: String)
+    case installing(version: String)
+    case restarting(version: String)
+    case failed(message: String, retryVersion: String?)
+
+    var statusText: String {
+        switch self {
+        case .idle:
+            return "Check for the latest signed macOS release."
+        case .checking:
+            return "Checking for updates…"
+        case .upToDate:
+            return "gujiguji is up to date."
+        case .available(let version):
+            return "\(version) is available and ready to download."
+        case .downloading(let version, let receivedBytes, let totalBytes):
+            let received = Self.byteString(receivedBytes)
+            guard let totalBytes, totalBytes > 0 else {
+                return "Downloading \(version) · \(received)"
+            }
+            let percent = min(100, max(0, Int(Double(receivedBytes) / Double(totalBytes) * 100)))
+            return "Downloading \(version) · \(received) of \(Self.byteString(totalBytes)) · \(percent)%"
+        case .verifying(let version):
+            return "Download complete. Verifying \(version)…"
+        case .preparing(let version):
+            return "Verification passed. Preparing \(version)…"
+        case .installing(let version):
+            return "\(version) is verified. Preparing the installer…"
+        case .restarting(let version):
+            return "\(version) is ready. gujiguji is quitting and will restart…"
+        case .failed(let message, _):
+            return "Update failed: \(message)"
+        }
+    }
+
+    var progressFraction: Double? {
+        guard case .downloading(_, let receivedBytes, let totalBytes) = self,
+              let totalBytes, totalBytes > 0 else { return nil }
+        return min(1, max(0, Double(receivedBytes) / Double(totalBytes)))
+    }
+
+    var isBusy: Bool {
+        switch self {
+        case .checking, .downloading, .verifying, .preparing, .installing, .restarting: true
+        default: false
+        }
+    }
+
+    var retryVersion: String? {
+        switch self {
+        case .available(let version): version
+        case .failed(_, let version): version
+        default: nil
+        }
+    }
+
+    var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
+    private static func byteString(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+}
+
 struct SettingsRuntimeState: Equatable {
-    var appVersion = "0.2.17"
+    var appVersion = "0.2.18"
     var localRuntimeSummary = "Local runtimes · Apple silicon"
     var localModels = LocalModelViewState.defaults
     var installingModelId: String?
@@ -59,7 +132,7 @@ struct SettingsRuntimeState: Equatable {
     var installationStatus = ""
     var statusMessage = "Settings saved"
     var startAtLogin = false
-    var updateAvailable = false
+    var appUpdate = AppUpdateViewState.idle
 }
 
 struct SettingsViewActions {
@@ -204,7 +277,10 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
     private let learnEdits = NSButton(checkboxWithTitle: "Learn correction rules from my edits", target: nil, action: nil)
     private let diagnostic = NSButton(checkboxWithTitle: "Log transcript, vocabulary, and LLM output locally for diagnostics", target: nil, action: nil)
     private let startAtLogin = NSButton(checkboxWithTitle: "Start gujiguji when I sign in", target: nil, action: nil)
+    private let checkUpdateButton = NSButton(title: "Check for updates", target: nil, action: nil)
     private let updateButton = NSButton(title: "Update now", target: nil, action: nil)
+    private let updateStatus = NSTextField(wrappingLabelWithString: "")
+    private let updateProgress = NSProgressIndicator()
 
     init(settings: AppSettings, runtime: SettingsRuntimeState = SettingsRuntimeState(), actions: SettingsViewActions) {
         var normalized = settings
@@ -237,7 +313,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         runtime = state
         statusLabel.stringValue = state.statusMessage
         startAtLogin.state = state.startAtLogin ? .on : .off
-        updateButton.isHidden = !state.updateAvailable
+        refreshUpdateUI()
         rebuildLocalModels()
         refreshComputedUI()
     }
@@ -648,18 +724,59 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate, N
         startAtLogin.target = self
         startAtLogin.action = #selector(startAtLoginChanged)
 
-        let check = NSButton(title: "Check for updates", target: self, action: #selector(checkUpdates))
+        checkUpdateButton.target = self
+        checkUpdateButton.action = #selector(checkUpdates)
+        checkUpdateButton.identifier = NSUserInterfaceItemIdentifier("settings.update.check")
         updateButton.target = self
         updateButton.action = #selector(installUpdate)
-        updateButton.isHidden = !runtime.updateAvailable
+        updateButton.identifier = NSUserInterfaceItemIdentifier("settings.update.install")
+        updateStatus.identifier = NSUserInterfaceItemIdentifier("settings.update.status")
+        updateStatus.font = .systemFont(ofSize: 11)
+        updateStatus.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        updateProgress.identifier = NSUserInterfaceItemIdentifier("settings.update.progress")
+        updateProgress.controlSize = .small
+        updateProgress.minValue = 0
+        updateProgress.maxValue = 1
+        updateProgress.heightAnchor.constraint(equalToConstant: 6).isActive = true
         let log = NSButton(title: "Open log", target: self, action: #selector(openLog))
+        let updateCard = CardView(content: vStack([
+            hStack([checkUpdateButton, updateButton, log], spacing: 8),
+            updateStatus,
+            updateProgress,
+        ], spacing: 7))
+        refreshUpdateUI()
         return makePage(title: "App", subtitle: "Language, privacy, startup, and diagnostics", views: [
             sectionTitle("Dictation"), fieldRow("Language", language),
             divider(), sectionTitle("Privacy and learning"), useContext, learnEdits, diagnostic,
             smallLabel("Diagnostic logs stay on this device and are never uploaded to gujiguji servers.", color: ViewPalette.muted),
             divider(), sectionTitle("Maintenance"), startAtLogin,
-            hStack([check, updateButton, log], spacing: 8),
+            updateCard,
         ])
+    }
+
+    private func refreshUpdateUI() {
+        let state = runtime.appUpdate
+        checkUpdateButton.title = state.isFailure ? "Check again" : "Check for updates"
+        checkUpdateButton.isEnabled = !state.isBusy
+        updateButton.title = state.isFailure ? "Retry update" : "Update now"
+        updateButton.isHidden = state.retryVersion == nil
+        updateButton.isEnabled = !state.isBusy
+        updateStatus.stringValue = state.statusText
+        updateStatus.textColor = state.isFailure ? ViewPalette.error : ViewPalette.muted
+
+        updateProgress.isHidden = !state.isBusy
+        guard state.isBusy else {
+            updateProgress.stopAnimation(nil)
+            return
+        }
+        if let fraction = state.progressFraction {
+            updateProgress.stopAnimation(nil)
+            updateProgress.isIndeterminate = false
+            updateProgress.doubleValue = fraction
+        } else {
+            updateProgress.isIndeterminate = true
+            updateProgress.startAnimation(nil)
+        }
     }
 
     private func loadDraftIntoControls() {

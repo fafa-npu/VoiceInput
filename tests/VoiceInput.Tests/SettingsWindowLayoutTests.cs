@@ -25,6 +25,7 @@ public sealed class SettingsWindowLayoutTests
         VerifyRecognitionVocabulary();
         VerifyLargeUnsupportedVocabularyPersists();
         VerifyUpdateResults();
+        VerifyUpdateLifecycle();
         VerifyModelDownloadProgress();
     });
 
@@ -530,7 +531,7 @@ public sealed class SettingsWindowLayoutTests
         window.Show();
         var button = Assert.IsType<Button>(window.FindName("CheckUpdatesButton"));
         var installButton = Assert.IsType<Button>(window.FindName("InstallUpdateButton"));
-        var status = Assert.IsType<TextBlock>(window.FindName("StatusText"));
+        var status = Assert.IsType<TextBlock>(window.FindName("UpdateStatusText"));
 
         foreach ((UpdateService.CheckResult checkResult, string expected, bool canInstall) in new[]
         {
@@ -562,6 +563,94 @@ public sealed class SettingsWindowLayoutTests
         }
 
         window.Close();
+    }
+
+    private static void VerifyUpdateLifecycle()
+    {
+        EnsureWindowsDirectoryEnvironment();
+        string root = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
+        using var manager = new FunAsrRuntimeManager(
+            root,
+            new HttpClient(new OfflineHandler()),
+            () => long.MaxValue,
+            (_, _) => Task.CompletedTask);
+        var updates = new UpdateService();
+        string? requestedUpdate = null;
+        var actions = new SettingsWindowActions(
+            () => false,
+            _ => { },
+            () => Task.FromResult(new UpdateService.CheckResult(
+                UpdateService.CheckOutcome.UpToDate,
+                $"v{UpdateService.CurrentVersion}",
+                UpdateService.CurrentVersion,
+                null)),
+            tag => requestedUpdate = tag,
+            () => { },
+            _ => Task.CompletedTask,
+            _ => { },
+            () => null,
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])),
+            updates);
+
+        var window = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
+        {
+            ShowInTaskbar = false,
+        };
+        window.Show();
+        var check = Assert.IsType<Button>(window.FindName("CheckUpdatesButton"));
+        var install = Assert.IsType<Button>(window.FindName("InstallUpdateButton"));
+        var progress = Assert.IsType<ProgressBar>(window.FindName("UpdateProgressBar"));
+        var status = Assert.IsType<TextBlock>(window.FindName("UpdateStatusText"));
+
+        updates.ReportStatus(new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Available,
+            "v9.9.9 is available.",
+            "v9.9.9"));
+        Assert.Equal(Visibility.Visible, install.Visibility);
+        Assert.True(install.IsEnabled);
+
+        updates.ReportStatus(new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Downloading,
+            "Downloading v9.9.9...",
+            "v9.9.9",
+            45,
+            100));
+        Assert.False(check.IsEnabled);
+        Assert.False(install.IsEnabled);
+        Assert.Equal(Visibility.Visible, progress.Visibility);
+        Assert.False(progress.IsIndeterminate);
+        Assert.Equal(45, progress.Value);
+        Assert.Contains("45%", status.Text);
+
+        updates.ReportStatus(new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Verifying,
+            "Verifying v9.9.9...",
+            "v9.9.9"));
+        Assert.True(progress.IsIndeterminate);
+        Assert.Contains("Verifying", status.Text);
+
+        updates.ReportFailure("Couldn't download v9.9.9. Check your connection and try again.", "v9.9.9");
+        Assert.True(check.IsEnabled);
+        Assert.True(install.IsEnabled);
+        Assert.Equal("Retry v9.9.9", install.Content);
+        Assert.Equal(Visibility.Collapsed, progress.Visibility);
+        window.Close();
+
+        // The updater is owned by AppController, so a newly opened Settings window restores state.
+        var reopened = new SettingsWindow(new AppSettings(), _ => { }, manager, actions)
+        {
+            ShowInTaskbar = false,
+        };
+        reopened.Show();
+        var reopenedStatus = Assert.IsType<TextBlock>(reopened.FindName("UpdateStatusText"));
+        var reopenedInstall = Assert.IsType<Button>(reopened.FindName("InstallUpdateButton"));
+        Assert.Contains("Couldn't download", reopenedStatus.Text);
+        Assert.Equal("Retry v9.9.9", reopenedInstall.Content);
+        reopenedInstall.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("v9.9.9", requestedUpdate);
+        reopened.Close();
     }
 
     private static void VerifyPages()

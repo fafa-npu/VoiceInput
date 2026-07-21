@@ -345,6 +345,62 @@ final class UIContractTests: XCTestCase {
         }
     }
 
+    func testUpdateProgressAndRetryRenderInMaintenanceArea() async {
+        await MainActor.run {
+            _ = NSApplication.shared
+            let controller = SettingsWindowController(
+                settings: AppSettings(),
+                runtime: SettingsRuntimeState(
+                    appUpdate: .downloading(
+                        version: "v0.3.0",
+                        receivedBytes: 25,
+                        totalBytes: 100)),
+                actions: SettingsViewActions(save: { _, _ in nil }))
+            guard let root = controller.window?.contentView,
+                  let status = allViews(in: root).first(where: {
+                      $0.identifier?.rawValue == "settings.update.status"
+                  }) as? NSTextField,
+                  let progress = allViews(in: root).first(where: {
+                      $0.identifier?.rawValue == "settings.update.progress"
+                  }) as? NSProgressIndicator,
+                  let check = allViews(in: root).first(where: {
+                      $0.identifier?.rawValue == "settings.update.check"
+                  }) as? NSButton,
+                  let install = allViews(in: root).first(where: {
+                      $0.identifier?.rawValue == "settings.update.install"
+                  }) as? NSButton else {
+                controller.close()
+                return XCTFail("The App page should expose update status and controls.")
+            }
+
+            XCTAssertTrue(status.stringValue.contains("25%"))
+            XCTAssertFalse(progress.isHidden)
+            XCTAssertFalse(progress.isIndeterminate)
+            XCTAssertEqual(progress.doubleValue, 0.25, accuracy: 0.001)
+            XCTAssertFalse(check.isEnabled)
+            XCTAssertTrue(install.isHidden)
+
+            controller.updateRuntime(SettingsRuntimeState(
+                appUpdate: .failed(
+                    message: "The connection was lost.",
+                    retryVersion: "v0.3.0")))
+            XCTAssertTrue(status.stringValue.contains("The connection was lost."))
+            XCTAssertTrue(progress.isHidden)
+            XCTAssertEqual(check.title, "Check again")
+            XCTAssertTrue(check.isEnabled)
+            XCTAssertEqual(install.title, "Retry update")
+            XCTAssertFalse(install.isHidden)
+
+            controller.updateRuntime(SettingsRuntimeState(
+                appUpdate: .restarting(version: "v0.3.0")))
+            XCTAssertTrue(status.stringValue.contains("restart"))
+            XCTAssertFalse(progress.isHidden)
+            XCTAssertTrue(progress.isIndeterminate)
+            XCTAssertFalse(check.isEnabled)
+            controller.close()
+        }
+    }
+
     @MainActor
     private func settingsPageHost(in root: NSView) -> NSView? {
         allViews(in: root).first { $0.identifier?.rawValue == "settings.page-host" }

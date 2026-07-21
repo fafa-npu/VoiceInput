@@ -30,12 +30,45 @@ public sealed class UpdateService
 
     public enum CheckOutcome { UpToDate, UpdateAvailable, CheckFailed }
 
+    public enum UpdateStage
+    {
+        Idle,
+        Checking,
+        Available,
+        UpToDate,
+        Downloading,
+        Verifying,
+        PreparingRestart,
+        Restarting,
+        Failed,
+    }
+
+    public sealed record UpdateStatus(
+        UpdateStage Stage,
+        string Message,
+        string? Tag = null,
+        long BytesReceived = 0,
+        long? TotalBytes = null)
+    {
+        public int? Percentage => TotalBytes is > 0
+            ? Math.Clamp((int)(BytesReceived * 100 / TotalBytes.Value), 0, 100)
+            : null;
+    }
+
     public sealed record CheckResult(
         CheckOutcome Outcome,
         string? LatestTag,
         Version? Latest,
         string? AssetApiUrl,
         string? AssetSha256 = null);
+
+    private UpdateStatus _status = new(
+        UpdateStage.Idle,
+        "Check for updates to keep gujiguji current.");
+
+    public UpdateStatus Status => Volatile.Read(ref _status);
+
+    public event Action<UpdateStatus>? StatusChanged;
 
     public static bool UsesPinnedPublisherVerification =>
         !string.IsNullOrWhiteSpace(AuthenticodeVerifier.ExpectedCertificateSha256);
@@ -49,13 +82,15 @@ public sealed class UpdateService
             using var req = new HttpRequestMessage(HttpMethod.Get, $"{ApiBase}/repos/{Repo}/releases/latest");
             AddHeaders(req, token, "application/vnd.github+json");
             using var resp = await Http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
+            if (!resp.IsSuccessStatusCode)
+                return CheckFailed();
 
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             var root = doc.RootElement;
             string? tag = root.GetProperty("tag_name").GetString();
             var latest = ParseVersion(tag);
-            if (latest is null) return new CheckResult(CheckOutcome.CheckFailed, tag, null, null);
+            if (latest is null)
+                return CheckFailed();
 
             string? assetUrl = null;
             string? assetSha256 = null;
@@ -76,9 +111,10 @@ public sealed class UpdateService
             var outcome = latest > CurrentVersion ? CheckOutcome.UpdateAvailable : CheckOutcome.UpToDate;
             return new CheckResult(outcome, tag, latest, assetUrl, assetSha256);
         }
-        catch
+        catch (Exception exception)
         {
-            return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
+            Log.Error("Update check", exception);
+            return CheckFailed();
         }
     }
 
@@ -87,14 +123,19 @@ public sealed class UpdateService
     /// this process to exit, replaces the running exe in place, and relaunches it. Returns false on
     /// any failure (nothing is changed and the app keeps running).
     /// </summary>
-    public async Task<bool> DownloadAndApplyAsync(string assetApiUrl, string? expectedSha256)
+    public async Task<bool> DownloadAndApplyAsync(
+        string tag,
+        string assetApiUrl,
+        string? expectedSha256)
     {
+        ReportStatus(new UpdateStatus(UpdateStage.Downloading, $"Downloading {tag}...", tag));
         string? token = await GetGitHubTokenAsync();   // optional: null ⇒ anonymous (public repo)
+        string? dir = null;
 
         try
         {
             // Isolate concurrent attempts and abandoned downloads from one another.
-            string dir = Path.Combine(Path.GetTempPath(), "VoiceInputUpdate", Guid.NewGuid().ToString("N"));
+            dir = Path.Combine(Path.GetTempPath(), "VoiceInputUpdate", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             string newExe = Path.Combine(dir, AssetName);
 
@@ -104,11 +145,28 @@ public sealed class UpdateService
                 // and drops the Authorization header cross-host, which the signed URL expects.
                 AddHeaders(req, token, "application/octet-stream");
                 using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
-                if (!resp.IsSuccessStatusCode) return false;
+                if (!resp.IsSuccessStatusCode)
+                    return DownloadFailed(tag, dir);
                 await using var fs = File.Create(newExe);
-                await resp.Content.CopyToAsync(fs);
+                await using Stream download = await resp.Content.ReadAsStreamAsync();
+                await CopyDownloadAsync(
+                    download,
+                    fs,
+                    resp.Content.Headers.ContentLength,
+                    (received, total) => ReportStatus(new UpdateStatus(
+                        UpdateStage.Downloading,
+                        $"Downloading {tag}...",
+                        tag,
+                        received,
+                        total)));
             }
-            if (new FileInfo(newExe).Length < 1_000_000) return false;   // sanity: real exe is ~80 MB
+            if (new FileInfo(newExe).Length < 1_000_000)
+                return DownloadFailed(tag, dir);   // sanity: real exe is ~80 MB
+
+            ReportStatus(new UpdateStatus(
+                UpdateStage.Verifying,
+                $"Verifying {tag}...",
+                tag));
             bool verified;
             if (UsesPinnedPublisherVerification)
             {
@@ -122,9 +180,16 @@ public sealed class UpdateService
             if (!verified)
             {
                 Directory.Delete(dir, recursive: true);
+                ReportFailure(
+                    $"{tag} could not be verified. Please retry or install it from the release page.",
+                    tag);
                 return false;
             }
 
+            ReportStatus(new UpdateStatus(
+                UpdateStage.PreparingRestart,
+                $"Preparing {tag} for restart...",
+                tag));
             string target = Environment.ProcessPath!;
             int pid = Environment.ProcessId;
             string helper = Path.Combine(dir, "apply-update.ps1");
@@ -150,13 +215,91 @@ public sealed class UpdateService
             {
                 Log.Write("Update helper could not be started.");
                 Directory.Delete(dir, recursive: true);
+                ReportFailure($"Couldn't prepare {tag}. Please try again.", tag);
                 return false;
             }
+            ReportStatus(new UpdateStatus(
+                UpdateStage.Restarting,
+                $"Restarting gujiguji to install {tag}...",
+                tag));
             return true;
         }
-        catch
+        catch (Exception exception)
         {
+            Log.Error("Update download", exception);
+            if (dir is not null && Directory.Exists(dir))
+            {
+                try { Directory.Delete(dir, recursive: true); }
+                catch { /* best-effort cleanup */ }
+            }
+            ReportFailure($"Couldn't download {tag}. Check your connection and try again.", tag);
             return false;
+        }
+    }
+
+    internal void ReportFailure(string message, string? tag = null) =>
+        ReportStatus(new UpdateStatus(UpdateStage.Failed, message, tag));
+
+    internal static async Task CopyDownloadAsync(
+        Stream source,
+        Stream destination,
+        long? totalBytes,
+        Action<long, long?> reportProgress,
+        CancellationToken cancellationToken = default)
+    {
+        byte[] buffer = new byte[128 * 1024];
+        long received = 0;
+        long lastReportedBytes = 0;
+        int? lastReportedPercentage = null;
+        reportProgress(0, totalBytes);
+
+        while (true)
+        {
+            int count = await source.ReadAsync(buffer, cancellationToken);
+            if (count == 0)
+                break;
+
+            await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+            received += count;
+            int? percentage = totalBytes is > 0
+                ? Math.Clamp((int)(received * 100 / totalBytes.Value), 0, 100)
+                : null;
+            if (percentage != lastReportedPercentage || received - lastReportedBytes >= 1024 * 1024)
+            {
+                reportProgress(received, totalBytes);
+                lastReportedBytes = received;
+                lastReportedPercentage = percentage;
+            }
+        }
+
+        if (received != lastReportedBytes)
+            reportProgress(received, totalBytes);
+    }
+
+    private CheckResult CheckFailed()
+    {
+        return new CheckResult(CheckOutcome.CheckFailed, null, null, null);
+    }
+
+    private bool DownloadFailed(string tag, string dir)
+    {
+        try { Directory.Delete(dir, recursive: true); }
+        catch { /* best-effort cleanup */ }
+        ReportFailure($"Couldn't download {tag}. Check your connection and try again.", tag);
+        return false;
+    }
+
+    internal void ReportStatus(UpdateStatus status)
+    {
+        Volatile.Write(ref _status, status);
+        Action<UpdateStatus>? handlers = StatusChanged;
+        if (handlers is null)
+            return;
+
+        foreach (Action<UpdateStatus> handler in handlers.GetInvocationList())
+        {
+            try { handler(status); }
+            catch (Exception exception) { Log.Error("Update status subscriber", exception); }
         }
     }
 

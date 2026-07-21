@@ -299,6 +299,13 @@ enum DictationState: String {
     var isProcessing: Bool {
         self == .transcribing || self == .refining || self == .injecting
     }
+
+    var canCancelWithEscape: Bool {
+        switch self {
+        case .starting, .listening: true
+        case .idle, .transcribing, .refining, .injecting, .failed, .cancelled: false
+        }
+    }
 }
 
 enum PttGesture: Equatable { case pressed, released, cancelled, recoveredRelease }

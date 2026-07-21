@@ -38,6 +38,9 @@ final class AppController: NSObject {
     private var speechFault: SpeechFault?
     private var pendingText: String?
     private var availableUpdate: AvailableUpdate?
+    private var appUpdateState = AppUpdateViewState.idle
+    private var updateCheckInProgress = false
+    private var updateInstallGeneration = 0
     private var installingModelId: String?
     private var installProgress: FunAsrInstallProgress?
 
@@ -58,7 +61,7 @@ final class AppController: NSObject {
         let hasAccessibility = PlatformPermissions.hasAccessibility
         let hasInputMonitoring = PlatformPermissions.hasInputMonitoring
         ensureKeyboardMonitor(requestIfNeeded: false)
-        AppLog.write("=== gujiguji macOS 0.2.17 started; profile=\(settings.activeProfile.name) "
+        AppLog.write("=== gujiguji macOS 0.2.18 started; profile=\(settings.activeProfile.name) "
                      + "engine=\(settings.engine.rawValue) language=\(settings.language) "
                      + "accessibility=\(hasAccessibility) inputMonitoring=\(hasInputMonitoring) ===")
         // A rebuilt or newly signed app can lose its TCC identity even when
@@ -100,6 +103,9 @@ final class AppController: NSObject {
         }
         keyboard.onCancelled = { [weak self] in
             Task { @MainActor [weak self] in self?.enqueueGesture(.cancelled) }
+        }
+        keyboard.onEscape = { [weak self] in
+            Task { @MainActor [weak self] in self?.cancelDictationWithEscape() }
         }
         keyboard.onSubmitted = { [weak self] in
             Task { @MainActor [weak self] in self?.corrections.captureSubmittedEdit() }
@@ -349,6 +355,43 @@ final class AppController: NSObject {
         AppLog.write("dictation cancelled because the activation key became a chord")
     }
 
+    private func cancelDictationWithEscape() {
+        guard state.canCancelWithEscape else { return }
+        cancelImmediately(
+            practiceStatus: "已取消",
+            practiceDetail: "点击文本框后可以重试。",
+            logMessage: "dictation cancelled with Escape")
+    }
+
+    private func cancelImmediately(
+        practiceStatus: String,
+        practiceDetail: String,
+        logMessage: String
+    ) {
+        // Esc must pre-empt the serialized lifecycle task. Queueing behind a
+        // pending start operation could leave the microphone active until its
+        // first-frame timeout completes.
+        lifecycleTail?.cancel()
+        lifecycleTail = nil
+        generation += 1
+        dictating = false
+        state = .cancelled
+        audio.onChunk = nil
+        engine?.cancel()
+        engine = nil
+        // release() also resumes a pending beginSession continuation, whereas
+        // cancelSession() can leave startup waiting for its first-frame timeout.
+        audio.release()
+        finalFragments.removeAll(keepingCapacity: true)
+        partial = ""
+        inputTarget = nil
+        overlay.hideAnimated()
+        onboardingWindow?.updatePractice(
+            status: practiceStatus, detail: practiceDetail, listening: false)
+        state = .idle
+        AppLog.write(logMessage)
+    }
+
     private func abortSession(
         notifyError: String?,
         expectedGeneration: Int? = nil,
@@ -584,22 +627,10 @@ final class AppController: NSObject {
     }
 
     private func cancelImmediatelyForPause() {
-        lifecycleTail?.cancel()
-        lifecycleTail = nil
-        generation += 1
-        dictating = false
-        state = .cancelled
-        audio.onChunk = nil
-        engine?.cancel()
-        engine = nil
-        audio.release()
-        finalFragments.removeAll(keepingCapacity: true)
-        partial = ""
-        inputTarget = nil
-        overlay.hideAnimated()
-        onboardingWindow?.updatePractice(status: "已暂停", detail: "恢复聆听后可以重试。", listening: false)
-        state = .idle
-        AppLog.write("active dictation cancelled because listening was paused")
+        cancelImmediately(
+            practiceStatus: "已暂停",
+            practiceDetail: "恢复聆听后可以重试。",
+            logMessage: "active dictation cancelled because listening was paused")
     }
 
     private func switchToNextProfile() {
@@ -883,7 +914,7 @@ final class AppController: NSObject {
             ? "FunASR \(FunAsrCatalog.runtimeVersion)"
             : "FunASR runtime not installed"
         return SettingsRuntimeState(
-            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.17",
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.18",
             localRuntimeSummary: "\(funAsrRuntime) · \(Qwen3AsrRuntimeManager.runtimeVersion) · Metal/CPU",
             localModels: FunAsrCatalog.models.map {
                 LocalModelViewState(id: $0.id, name: $0.displayName, detail: $0.description,
@@ -897,7 +928,7 @@ final class AppController: NSObject {
             installationStatus: installProgressStatus ?? "",
             statusMessage: installProgress?.error ?? "Settings saved",
             startAtLogin: LoginItemService.enabled,
-            updateAvailable: availableUpdate != nil && updateInstallTask == nil)
+            appUpdate: appUpdateState)
     }
 
     private var progressFraction: Double? {
@@ -1067,22 +1098,36 @@ final class AppController: NSObject {
     }
 
     private func checkForUpdates(silent: Bool) async {
+        guard !updateCheckInProgress, updateInstallTask == nil else { return }
+        updateCheckInProgress = true
+        appUpdateState = .checking
+        settingsWindow?.updateRuntime(settingsRuntime)
+        defer {
+            updateCheckInProgress = false
+            settingsWindow?.updateRuntime(settingsRuntime)
+            rebuildMenu()
+        }
+
         let result = await updater.check()
         switch result {
         case .upToDate:
+            availableUpdate = nil
+            appUpdateState = .upToDate
             if !silent { notify("Up to date", "You already have the latest version.") }
         case .available(let update):
             availableUpdate = update
-            notify("Update available", "\(update.tag) is ready to install from the menu bar.")
+            appUpdateState = .available(version: update.tag)
+            notify("Update available", "\(update.tag) is ready to install in Settings.")
         case .failed(let message):
+            appUpdateState = silent && settingsWindow == nil
+                ? .idle
+                : .failed(message: message, retryVersion: availableUpdate?.tag)
             if !silent { notify("Update check failed", message) }
         }
-        settingsWindow?.updateRuntime(settingsRuntime)
-        rebuildMenu()
     }
 
     private func installAvailableUpdate() {
-        guard updateInstallTask == nil else { return }
+        guard updateInstallTask == nil, !updateCheckInProgress else { return }
         guard let update = availableUpdate else {
             Task { [weak self] in await self?.checkForUpdates(silent: false) }
             return
@@ -1093,6 +1138,12 @@ final class AppController: NSObject {
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        appUpdateState = .downloading(
+            version: update.tag,
+            receivedBytes: 0,
+            totalBytes: nil)
+        updateInstallGeneration += 1
+        let installGeneration = updateInstallGeneration
         updateInstallTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -1101,11 +1152,58 @@ final class AppController: NSObject {
                 rebuildMenu()
             }
             do {
-                if try await updater.stageAndApply(update) { NSApp.terminate(nil) }
-            } catch { showAlert(title: "Update failed", message: error.localizedDescription) }
+                let ready = try await updater.stageAndApply(update) { [weak self] progress in
+                    self?.handleUpdateInstallProgress(
+                        progress,
+                        version: update.tag,
+                        generation: installGeneration)
+                }
+                guard ready else {
+                    throw SpeechFault(.service, "The update installer could not be started.")
+                }
+                appUpdateState = .restarting(version: update.tag)
+                settingsWindow?.updateRuntime(settingsRuntime)
+                rebuildMenu()
+                await Task.yield()
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                NSApp.terminate(nil)
+            } catch is CancellationError {
+                // App shutdown cancels the updater task.
+            } catch {
+                appUpdateState = .failed(
+                    message: error.localizedDescription,
+                    retryVersion: update.tag)
+                settingsWindow?.updateRuntime(settingsRuntime)
+                showAlert(title: "Update failed", message: error.localizedDescription)
+            }
         }
         settingsWindow?.updateRuntime(settingsRuntime)
         rebuildMenu()
+    }
+
+    private func handleUpdateInstallProgress(
+        _ progress: UpdateInstallProgress,
+        version: String,
+        generation: Int
+    ) {
+        guard updateInstallTask != nil, generation == updateInstallGeneration else { return }
+        switch progress {
+        case .downloading(let receivedBytes, let totalBytes):
+            // Ignore a late URLSession progress callback after verification began.
+            guard case .downloading(_, let currentBytes, let currentTotal) = appUpdateState,
+                  receivedBytes >= currentBytes else { return }
+            appUpdateState = .downloading(
+                version: version,
+                receivedBytes: receivedBytes,
+                totalBytes: totalBytes ?? currentTotal)
+        case .verifying:
+            appUpdateState = .verifying(version: version)
+        case .preparing:
+            appUpdateState = .preparing(version: version)
+        case .installing:
+            appUpdateState = .installing(version: version)
+        }
+        settingsWindow?.updateRuntime(settingsRuntime)
     }
 
     // MARK: - Recovery and helpers

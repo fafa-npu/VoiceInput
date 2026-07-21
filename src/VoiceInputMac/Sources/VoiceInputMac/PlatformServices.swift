@@ -96,13 +96,66 @@ struct KeyPressLatch {
     }
 }
 
+struct MouseButtonCycle {
+    private(set) var pressedButtonMask = 0
+
+    var hasPressedButton: Bool { pressedButtonMask != 0 }
+
+    mutating func consume(type: CGEventType, buttonNumber: Int64) -> Bool {
+        guard buttonNumber >= 0, buttonNumber < Int64(Int.bitWidth) else { return false }
+        let buttonMask = 1 << Int(buttonNumber)
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            pressedButtonMask |= buttonMask
+            return true
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            pressedButtonMask &= ~buttonMask
+            return false
+        default:
+            return false
+        }
+    }
+
+    mutating func reconcile(pressedButtonMask: Int) {
+        self.pressedButtonMask = pressedButtonMask
+    }
+
+    mutating func reset() { pressedButtonMask = 0 }
+}
+
+enum EscapeKeyAction: Equatable {
+    case cancelSession
+    case replaceChordCancellation
+}
+
+struct EscapeKeyCycle {
+    private(set) var isDown = false
+
+    mutating func keyDown(activationCycle: ActivationCycle) -> EscapeKeyAction? {
+        guard !isDown else { return nil }
+        isDown = true
+        if activationCycle.isDown {
+            return activationCycle.isChorded ? .cancelSession : .replaceChordCancellation
+        }
+        return .cancelSession
+    }
+
+    mutating func keyUp() { isDown = false }
+
+    mutating func reconcile(physicalKeyDown: Bool) {
+        if !physicalKeyDown { isDown = false }
+    }
+}
+
 final class KeyboardMonitor {
     static let injectionTag: Int64 = 0x47554A49
+    static let escapeKeyCode: CGKeyCode = 53
 
     var onPressed: (() -> Void)?
     var onReleased: (() -> Void)?
     var onCancelled: (() -> Void)?
     var onRecoveredRelease: (() -> Void)?
+    var onEscape: (() -> Void)?
     var onSubmitted: (() -> Void)?
     var onSwitchProfile: (() -> Void)?
 
@@ -114,6 +167,8 @@ final class KeyboardMonitor {
     private var capsLockFlagState = CGEventSource.flagsState(.combinedSessionState)
         .contains(.maskAlphaShift)
     private var profileSwitchLatch = KeyPressLatch()
+    private var escapeKeyCycle = EscapeKeyCycle()
+    private var mouseButtonCycle = MouseButtonCycle()
     private var pressedNonModifierKeys: Set<CGKeyCode> = []
 
     init(activationKey: ActivationKey) { self.activationKey = activationKey }
@@ -124,6 +179,8 @@ final class KeyboardMonitor {
         activationCycle.reset()
         capsLockFlagState = CGEventSource.flagsState(.combinedSessionState)
             .contains(.maskAlphaShift)
+        escapeKeyCycle.keyUp()
+        mouseButtonCycle.reconcile(pressedButtonMask: NSEvent.pressedMouseButtons)
         pressedNonModifierKeys.removeAll(keepingCapacity: true)
     }
 
@@ -131,9 +188,16 @@ final class KeyboardMonitor {
         guard tap == nil else { return }
         capsLockFlagState = CGEventSource.flagsState(.combinedSessionState)
             .contains(.maskAlphaShift)
+        mouseButtonCycle.reconcile(pressedButtonMask: NSEvent.pressedMouseButtons)
         let mask = (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
+            | (1 << CGEventType.leftMouseDown.rawValue)
+            | (1 << CGEventType.leftMouseUp.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseUp.rawValue)
+            | (1 << CGEventType.otherMouseDown.rawValue)
+            | (1 << CGEventType.otherMouseUp.rawValue)
             | (1 << CGEventType.tapDisabledByTimeout.rawValue)
             | (1 << CGEventType.tapDisabledByUserInput.rawValue)
         guard let tap = CGEvent.tapCreate(
@@ -165,6 +229,8 @@ final class KeyboardMonitor {
         tap = nil
         activationCycle.reset()
         profileSwitchLatch.end()
+        escapeKeyCycle.keyUp()
+        mouseButtonCycle.reset()
         pressedNonModifierKeys.removeAll(keepingCapacity: true)
     }
 
@@ -179,6 +245,8 @@ final class KeyboardMonitor {
             // no longer be paired with a trustworthy key-up.
             if let gesture = activationCycle.consume(.otherKey) { emit(gesture) }
             profileSwitchLatch.end()
+            escapeKeyCycle.keyUp()
+            mouseButtonCycle.reconcile(pressedButtonMask: NSEvent.pressedMouseButtons)
             pressedNonModifierKeys.removeAll(keepingCapacity: true)
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
@@ -187,8 +255,27 @@ final class KeyboardMonitor {
             return Unmanaged.passUnretained(event)
         }
 
+        if mouseButtonCycle.consume(
+            type: type,
+            buttonNumber: event.getIntegerValueField(.mouseEventButtonNumber)
+        ) {
+            if let gesture = activationCycle.consume(.otherKey) { emit(gesture) }
+            return Unmanaged.passUnretained(event)
+        }
+        if type == .leftMouseUp || type == .rightMouseUp || type == .otherMouseUp {
+            return Unmanaged.passUnretained(event)
+        }
+
         let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let isActivation = code == activationKey.keyCode
+        var escapeAction: EscapeKeyAction?
+        if code == Self.escapeKeyCode {
+            if type == .keyDown {
+                escapeAction = escapeKeyCycle.keyDown(activationCycle: activationCycle)
+            } else if type == .keyUp {
+                escapeKeyCycle.keyUp()
+            }
+        }
 
         if !isActivation {
             if type == .keyDown { pressedNonModifierKeys.insert(code) }
@@ -201,8 +288,10 @@ final class KeyboardMonitor {
         if let input = activationCycleInput(
             type: type, eventFlags: event.flags, isActivation: isActivation),
            let gesture = activationCycle.consume(input) {
-            emit(gesture)
+            if escapeAction != .replaceChordCancellation { emit(gesture) }
         }
+
+        if escapeAction != nil { onEscape?() }
 
         if type == .keyDown, code == 5,
            event.flags.contains(.maskAlternate), event.flags.contains(.maskShift),
@@ -246,6 +335,7 @@ final class KeyboardMonitor {
     private func startsChorded(_ flags: CGEventFlags) -> Bool {
         hasUnexpectedModifiers(flags)
             || !pressedNonModifierKeys.isEmpty
+            || mouseButtonCycle.hasPressedButton
             || activationKey.siblingKeyCodes.contains(where: {
                 CGEventSource.keyState(.combinedSessionState, key: $0)
             })
@@ -267,6 +357,10 @@ final class KeyboardMonitor {
     private func checkPhysicalState() {
         profileSwitchLatch.reconcile(
             physicalKeyDown: CGEventSource.keyState(.combinedSessionState, key: 5))
+        escapeKeyCycle.reconcile(
+            physicalKeyDown: CGEventSource.keyState(
+                .combinedSessionState, key: Self.escapeKeyCode))
+        mouseButtonCycle.reconcile(pressedButtonMask: NSEvent.pressedMouseButtons)
         pressedNonModifierKeys = Set(pressedNonModifierKeys.filter {
             CGEventSource.keyState(.combinedSessionState, key: $0)
         })

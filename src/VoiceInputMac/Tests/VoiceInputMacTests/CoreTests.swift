@@ -215,6 +215,86 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(latch.isDown)
     }
 
+    func testMouseButtonCycleTracksButtonsWithoutTreatingMovementOrScrollAsClicks() {
+        var mouse = MouseButtonCycle()
+
+        XCTAssertFalse(mouse.consume(type: .mouseMoved, buttonNumber: 0))
+        XCTAssertFalse(mouse.consume(type: .scrollWheel, buttonNumber: 0))
+        XCTAssertFalse(mouse.hasPressedButton)
+
+        XCTAssertTrue(mouse.consume(type: .leftMouseDown, buttonNumber: 0))
+        XCTAssertTrue(mouse.hasPressedButton)
+        XCTAssertTrue(mouse.consume(type: .otherMouseDown, buttonNumber: 3))
+        XCTAssertFalse(mouse.consume(type: .leftMouseUp, buttonNumber: 0))
+        XCTAssertTrue(mouse.hasPressedButton)
+        XCTAssertFalse(mouse.consume(type: .otherMouseUp, buttonNumber: 3))
+        XCTAssertFalse(mouse.hasPressedButton)
+    }
+
+    func testMouseClickChordsHeldActivationOnceAndSuppressesRelease() {
+        var activation = ActivationCycle()
+        XCTAssertEqual(activation.consume(.down(startsChorded: false)), .pressed)
+
+        var mouse = MouseButtonCycle()
+        XCTAssertTrue(mouse.consume(type: .leftMouseDown, buttonNumber: 0))
+        XCTAssertEqual(activation.consume(.otherKey), .cancelled)
+        XCTAssertTrue(mouse.consume(type: .rightMouseDown, buttonNumber: 1))
+        XCTAssertNil(activation.consume(.otherKey))
+        XCTAssertNil(activation.consume(.up))
+    }
+
+    func testMouseButtonHeldBeforeActivationStartsChorded() {
+        var mouse = MouseButtonCycle()
+        mouse.reconcile(pressedButtonMask: 1 << 2)
+
+        var activation = ActivationCycle()
+        XCTAssertEqual(
+            activation.consume(.down(startsChorded: mouse.hasPressedButton)), .cancelled)
+        XCTAssertNil(activation.consume(.up))
+    }
+
+    func testEscapeKeyCycleEmitsOnceUntilReleaseAndRecoversMissedKeyUp() {
+        var escape = EscapeKeyCycle()
+        let idleActivation = ActivationCycle()
+
+        XCTAssertEqual(escape.keyDown(activationCycle: idleActivation), .cancelSession)
+        XCTAssertNil(escape.keyDown(activationCycle: idleActivation))
+        escape.reconcile(physicalKeyDown: true)
+        XCTAssertTrue(escape.isDown)
+        escape.reconcile(physicalKeyDown: false)
+        XCTAssertFalse(escape.isDown)
+        XCTAssertEqual(escape.keyDown(activationCycle: idleActivation), .cancelSession)
+        escape.keyUp()
+        XCTAssertFalse(escape.isDown)
+    }
+
+    func testEscapeReplacesHeldActivationChordCancellationWithoutDoubleEmission() {
+        var activation = ActivationCycle()
+        XCTAssertEqual(activation.consume(.down(startsChorded: false)), .pressed)
+
+        var escape = EscapeKeyCycle()
+        XCTAssertEqual(
+            escape.keyDown(activationCycle: activation), .replaceChordCancellation)
+        XCTAssertEqual(activation.consume(.otherKey), .cancelled)
+        XCTAssertNil(escape.keyDown(activationCycle: activation))
+        XCTAssertNil(activation.consume(.otherKey))
+
+        var alreadyChordedEscape = EscapeKeyCycle()
+        XCTAssertEqual(
+            alreadyChordedEscape.keyDown(activationCycle: activation), .cancelSession)
+    }
+
+    func testEscapeCancelsCaptureButNotProcessingOrIdle() {
+        for state in [DictationState.starting, .listening] {
+            XCTAssertTrue(state.canCancelWithEscape, "Expected Escape to cancel \(state.rawValue)")
+        }
+        for state in [
+            DictationState.idle, .transcribing, .refining, .injecting, .failed, .cancelled,
+        ] {
+            XCTAssertFalse(state.canCancelWithEscape, "Expected Escape to ignore \(state.rawValue)")
+        }
+    }
+
     func testVocabularyAndRefinementGuard() {
         XCTAssertEqual(RecognitionVocabulary.parse("Codex，codex; FunASR\n 语音 "), ["Codex", "FunASR", "语音"])
         XCTAssertTrue(RefinementGuard.isSafe(original: "please open voice input settings",
@@ -231,10 +311,85 @@ final class CoreTests: XCTestCase {
                        String(repeating: "a", count: 64))
     }
 
+    func testUpdateViewStateReportsProgressAndLifecycleCopy() {
+        let downloading = AppUpdateViewState.downloading(
+            version: "v0.3.0",
+            receivedBytes: 25,
+            totalBytes: 100)
+        XCTAssertEqual(downloading.progressFraction, 0.25)
+        XCTAssertTrue(downloading.statusText.contains("25%"))
+        XCTAssertTrue(downloading.isBusy)
+
+        XCTAssertTrue(AppUpdateViewState.verifying(version: "v0.3.0").statusText.contains("Verifying"))
+        XCTAssertTrue(AppUpdateViewState.preparing(version: "v0.3.0").statusText.contains("Preparing"))
+        XCTAssertTrue(AppUpdateViewState.restarting(version: "v0.3.0").statusText.contains("restart"))
+
+        let failed = AppUpdateViewState.failed(
+            message: "The connection was lost.",
+            retryVersion: "v0.3.0")
+        XCTAssertTrue(failed.isFailure)
+        XCTAssertFalse(failed.isBusy)
+        XCTAssertEqual(failed.retryVersion, "v0.3.0")
+        XCTAssertTrue(failed.statusText.contains("The connection was lost."))
+    }
+
+    @MainActor
+    func testUpdateDownloadMovesTemporaryFileAndReportsLifecycle() async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UpdateStubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let service = UpdateService(session: session)
+        let update = AvailableUpdate(
+            tag: "v99.0.0",
+            version: [99, 0, 0],
+            assetURL: URL(string: "https://updates.example/gujiguji-mac.zip")!,
+            sha256: String(repeating: "0", count: 64))
+        var progress: [UpdateInstallProgress] = []
+
+        do {
+            _ = try await service.stageAndApply(update) { progress.append($0) }
+            XCTFail("A deliberately incorrect digest should reject the fixture.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("SHA-256"))
+        }
+
+        XCTAssertTrue(progress.contains { state in
+            guard case .downloading(let receivedBytes, _) = state else { return false }
+            return receivedBytes == Int64(UpdateStubURLProtocol.payload.count)
+        })
+        XCTAssertTrue(progress.contains(.verifying))
+        XCTAssertFalse(progress.contains(.preparing))
+    }
+
     func testEndpointValidation() {
         XCTAssertTrue(SettingsValidation.isHTTPS("https://example.test/path"))
         XCTAssertFalse(SettingsValidation.isHTTPS("http://example.test"))
         XCTAssertTrue(SettingsValidation.isHTTPSOrLoopbackHTTP("http://127.0.0.1:11434/v1"))
         XCTAssertFalse(SettingsValidation.isHTTPSOrLoopbackHTTP("http://192.168.1.8/v1"))
     }
+}
+
+private final class UpdateStubURLProtocol: URLProtocol {
+    static let payload = Data(repeating: 0x5a, count: 2_100_000)
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Length": String(Self.payload.count)]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Self.payload)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

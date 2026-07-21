@@ -15,6 +15,13 @@ enum UpdateCheckResult: Equatable {
     case failed(String)
 }
 
+enum UpdateInstallProgress: Equatable, Sendable {
+    case downloading(receivedBytes: Int64, totalBytes: Int64?)
+    case verifying
+    case preparing
+    case installing
+}
+
 /// Manual GitHub release updates. An update is accepted only when GitHub supplies a SHA-256
 /// digest and the downloaded app has this app's bundle identifier and signing Team ID.
 final class UpdateService {
@@ -59,7 +66,10 @@ final class UpdateService {
 
     /// Downloads and validates the update, then starts a detached helper that swaps the app after
     /// this process exits. The caller should terminate NSApplication only after this returns true.
-    func stageAndApply(_ update: AvailableUpdate) async throws -> Bool {
+    func stageAndApply(
+        _ update: AvailableUpdate,
+        progress: @MainActor @escaping (UpdateInstallProgress) -> Void = { _ in }
+    ) async throws -> Bool {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("gujiguji-update-\(UUID().uuidString)", isDirectory: true)
         let archive = root.appendingPathComponent("gujiguji.zip")
@@ -67,15 +77,32 @@ final class UpdateService {
         try FileManager.default.createDirectory(at: expanded, withIntermediateDirectories: true)
 
         do {
-            let (downloaded, response) = try await session.download(from: update.assetURL)
+            await progress(.downloading(receivedBytes: 0, totalBytes: nil))
+            let response = try await UpdateDownload(
+                configuration: session.configuration,
+                source: update.assetURL,
+                destination: archive
+            ) { receivedBytes, totalBytes in
+                Task { @MainActor in
+                    progress(.downloading(
+                        receivedBytes: receivedBytes,
+                        totalBytes: totalBytes))
+                }
+            }.run()
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw SpeechFault(.network, "The update download failed.")
             }
-            try FileManager.default.moveItem(at: downloaded, to: archive)
+            let downloadedBytes = (try? archive.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                .map(Int64.init) ?? 0
+            await progress(.downloading(
+                receivedBytes: downloadedBytes,
+                totalBytes: downloadedBytes > 0 ? downloadedBytes : nil))
+            await progress(.verifying)
             guard try Self.sha256(archive).caseInsensitiveCompare(update.sha256) == .orderedSame else {
                 throw SpeechFault(.service, "The update failed its SHA-256 integrity check.")
             }
 
+            await progress(.preparing)
             try Self.run("/usr/bin/ditto", ["-x", "-k", archive.path, expanded.path])
             guard let candidate = Self.findApp(in: expanded) else {
                 throw SpeechFault(.service, "The update does not contain gujiguji.app.")
@@ -97,6 +124,7 @@ final class UpdateService {
                                  healthToken, expectedVersion]
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
+            await progress(.installing)
             try process.run()
             return true
         } catch {
@@ -107,7 +135,7 @@ final class UpdateService {
 
     static var currentVersion: [Int] {
         parseVersion(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-                     ?? "0.2.17") ?? [0]
+                     ?? "0.2.18") ?? [0]
     }
 
     static func parseVersion(_ value: String?) -> [Int]? {
@@ -328,4 +356,149 @@ if ditto "$source" "$target" && \
 fi
 exit 1
 """#
+}
+
+private final class UpdateDownload: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private static let reportStride: Int64 = 1_048_576
+
+    private let configuration: URLSessionConfiguration
+    private let source: URL
+    private let destination: URL
+    private let report: @Sendable (Int64, Int64?) -> Void
+    private let lock = NSLock()
+
+    private var continuation: CheckedContinuation<URLResponse, Error>?
+    private var activeSession: URLSession?
+    private var activeTask: URLSessionDownloadTask?
+    private var cancellationRequested = false
+    private var finished = false
+
+    // Accessed only by the serial URLSession delegate queue.
+    private var lastReportedBytes: Int64 = 0
+    private var lastReportUptime: TimeInterval = 0
+    private var moveError: Error?
+    private var movedDownload = false
+
+    init(
+        configuration: URLSessionConfiguration,
+        source: URL,
+        destination: URL,
+        report: @escaping @Sendable (Int64, Int64?) -> Void
+    ) {
+        self.configuration = configuration
+        self.source = source
+        self.destination = destination
+        self.report = report
+    }
+
+    func run() async throws -> URLResponse {
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let queue = OperationQueue()
+                queue.maxConcurrentOperationCount = 1
+                queue.qualityOfService = .utility
+                let session = URLSession(
+                    configuration: configuration,
+                    delegate: self,
+                    delegateQueue: queue)
+                let task = session.downloadTask(with: source)
+                let shouldStart = lock.withLock {
+                    guard !cancellationRequested else { return false }
+                    self.continuation = continuation
+                    activeSession = session
+                    activeTask = task
+                    return true
+                }
+                if shouldStart {
+                    task.resume()
+                } else {
+                    session.invalidateAndCancel()
+                    continuation.resume(throwing: CancellationError())
+                }
+            }
+        } onCancel: {
+            self.cancel()
+        }
+    }
+
+    private func cancel() {
+        let task = lock.withLock {
+            cancellationRequested = true
+            return activeTask
+        }
+        task?.cancel()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let shouldReport = lock.withLock {
+            let firstReport = lastReportedBytes == 0
+            let finalReport = totalBytesExpectedToWrite > 0
+                && totalBytesWritten >= totalBytesExpectedToWrite
+            let periodicReport = totalBytesWritten - lastReportedBytes >= Self.reportStride
+                && now - lastReportUptime >= 0.1
+            guard firstReport || finalReport || periodicReport else { return false }
+            lastReportedBytes = totalBytesWritten
+            lastReportUptime = now
+            return true
+        }
+        guard shouldReport else { return }
+        report(
+            totalBytesWritten,
+            totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        do {
+            try FileManager.default.moveItem(at: location, to: destination)
+            movedDownload = true
+        } catch {
+            moveError = error
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        let result: Result<URLResponse, Error>
+        if let moveError {
+            result = .failure(moveError)
+        } else if let error {
+            result = .failure(error)
+        } else if !movedDownload {
+            result = .failure(URLError(.cannotCreateFile))
+        } else if let response = task.response {
+            result = .success(response)
+        } else {
+            result = .failure(URLError(.badServerResponse))
+        }
+        finish(result)
+    }
+
+    private func finish(_ result: Result<URLResponse, Error>) {
+        let state = lock.withLock { () -> (CheckedContinuation<URLResponse, Error>, URLSession)? in
+            guard !finished, let continuation, let activeSession else { return nil }
+            finished = true
+            self.continuation = nil
+            self.activeSession = nil
+            activeTask = nil
+            return (continuation, activeSession)
+        }
+        guard let (continuation, session) = state else { return }
+        session.finishTasksAndInvalidate()
+        continuation.resume(with: result)
+    }
 }

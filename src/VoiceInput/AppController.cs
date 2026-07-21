@@ -32,12 +32,13 @@ public sealed class AppController : IDisposable
     private readonly UpdateService _updater = new();
     private readonly FunAsrRuntimeManager _funAsr = new();
     private readonly object _funAsrInstallLock = new();
+    private readonly object _updateLock = new();
     private CancellationTokenSource? _funAsrInstallCancellation;
     private Task? _funAsrInstallTask;
     private string? _funAsrInstallingModelId;
-    private string? _availableUpdateTag;
-    private string? _availableAssetUrl;
-    private string? _availableAssetSha256;
+    private Task<UpdateService.CheckResult>? _updateCheckTask;
+    private Task? _updateApplyTask;
+    private UpdateCandidate? _availableUpdate;
 
     private OverlayWindow? _overlay;
     private FirstRunWindow? _firstRunWindow;
@@ -65,6 +66,8 @@ public sealed class AppController : IDisposable
     private const int StartTimeoutMs = 8000;
     private const int FirstFrameTimeoutMs = 3000;   // max wait for a cold mic to start delivering audio
 
+    private sealed record UpdateCandidate(string Tag, string? AssetUrl, string? AssetSha256);
+
     public AppController()
     {
         _ui = Application.Current.Dispatcher;
@@ -77,6 +80,7 @@ public sealed class AppController : IDisposable
         // key-up cannot sit in the dispatcher queue behind the user's next Ctrl gesture.
         _hook.RecoveredRelease += () => HandlePttGesture(PttGesture.RecoveredRelease);
         _hook.Cancelled += () => _ui.BeginInvoke(() => HandlePttGesture(PttGesture.Cancelled));
+        _hook.EscapePressed += () => _ui.BeginInvoke(HandleEscapePressed);
         _hook.Submitted += () => _ui.BeginInvoke(() => _ = _corrections.CaptureAsync(_contextReader, _injector));
         _hook.ProfileSwitchRequested += () => _ui.BeginInvoke(HandleProfileSwitchRequested);
 
@@ -131,6 +135,9 @@ public sealed class AppController : IDisposable
             or DictationSessionState.Refining
             or DictationSessionState.Injecting);
 
+    internal static bool ShouldCancelForEscape(bool dictating, DictationSessionState state) =>
+        dictating && state is DictationSessionState.Starting or DictationSessionState.Listening;
+
     internal static string NextProfileId(string current) =>
         current == InputProfile.Profile2Id ? InputProfile.Profile1Id : InputProfile.Profile2Id;
 
@@ -157,12 +164,26 @@ public sealed class AppController : IDisposable
                 _ = StopDictationAsync();
                 break;
             case PttGestureAction.Cancel:
-                _ = CancelDictationAsync();
+                _ = CancelDictationAsync("chord detected");
                 break;
             case PttGestureAction.Busy:
                 Notify("Still processing", "Wait for the current dictation to finish before starting another.");
                 break;
         }
+    }
+
+    private void HandleEscapePressed()
+    {
+        if (!ShouldCancelForEscape(_dictating, _session.State))
+            return;
+
+        // Signal first: StartDictationAsync may currently own the lifecycle gate while waiting on
+        // model/microphone startup, and its token must be cancelled without waiting for that gate.
+        Log.Write("Dictation cancelled (Escape pressed).");
+        _session.Cancel();
+        _engine?.Cancel();
+        _overlay?.HideAnimated();
+        _ = CancelDictationAsync(reason: null);
     }
 
     public void Start()
@@ -284,7 +305,7 @@ public sealed class AppController : IDisposable
                 // Open (or reuse a warm) mic, then only cue the user to speak once it's actually
                 // delivering audio — so a cold-start device doesn't clip the first words.
                 _audio.BeginSession();
-                bool live = await Task.WhenAny(_audio.FirstFrame, Task.Delay(FirstFrameTimeoutMs)) == _audio.FirstFrame;
+                bool live = await Task.WhenAny(_audio.FirstFrame, Task.Delay(FirstFrameTimeoutMs, ct)) == _audio.FirstFrame;
                 ct.ThrowIfCancellationRequested();
                 _session.MoveTo(DictationSessionState.Listening);
                 _overlay!.SetText(Placeholder());
@@ -292,6 +313,13 @@ public sealed class AppController : IDisposable
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                _session.MoveTo(DictationSessionState.Cancelled);
+                await AbortInternalAsync();
+            }
+            catch (Exception) when (ct.IsCancellationRequested)
+            {
+                // Some recognizers surface their own exception type when Cancel interrupts
+                // StartAsync. Escape cancellation is intentional and must stay silent.
                 _session.MoveTo(DictationSessionState.Cancelled);
                 await AbortInternalAsync();
             }
@@ -412,13 +440,14 @@ public sealed class AppController : IDisposable
 
     private static string Trim(string s) => s.Length <= 120 ? s : s[..120] + "…";
 
-    private async Task CancelDictationAsync()
+    private async Task CancelDictationAsync(string? reason)
     {
         await _gate.WaitAsync();
         try
         {
             if (!_dictating) return;
-            Log.Write("Dictation cancelled (chord detected).");
+            if (reason is not null)
+                Log.Write($"Dictation cancelled ({reason}).");
             await AbortInternalAsync();
         }
         finally
@@ -770,7 +799,7 @@ public sealed class AppController : IDisposable
         {
             _session.Cancel();
             _audio.Release();   // drop any warm mic so paused == mic fully off
-            if (_dictating) _ = CancelDictationAsync();
+            if (_dictating) _ = CancelDictationAsync("listening paused");
         }
         if (_tray is not null) _tray.Text = TrayTooltip();
         Notify(_paused ? "Listening paused" : "Listening resumed",
@@ -927,7 +956,7 @@ public sealed class AppController : IDisposable
         settings.Click += (_, _) => OpenSettings();
         menu.Items.Add(settings);
 
-        if (_availableUpdateTag is { } updateTag)
+        if (_availableUpdate?.Tag is { } updateTag)
         {
             var update = new WinForms.ToolStripMenuItem($"Update to {updateTag}…");
             update.Click += (_, _) => PromptAndApplyUpdate(updateTag);
@@ -1071,7 +1100,8 @@ public sealed class AppController : IDisposable
             ActiveFunAsrModelId,
             () => _corrections.LoadPairs().Count,
             _corrections.Clear,
-            ReviewCorrectionsAsync),
+            ReviewCorrectionsAsync,
+            _updater),
             showLanguageIntelligence);
         if (firstRun is not null)
         {
@@ -1150,24 +1180,58 @@ public sealed class AppController : IDisposable
 
     // ---------------- Updates (manual, user-chosen) ----------------
 
-    private async Task<UpdateService.CheckResult> CheckForUpdatesAsync(bool silent)
+    private Task<UpdateService.CheckResult> CheckForUpdatesAsync(bool silent)
     {
+        lock (_updateLock)
+        {
+            if (_updateCheckTask is { IsCompleted: false })
+                return _updateCheckTask;
+            _updateCheckTask = CheckForUpdatesCoreAsync(silent);
+            return _updateCheckTask;
+        }
+    }
+
+    private async Task<UpdateService.CheckResult> CheckForUpdatesCoreAsync(bool silent)
+    {
+        _updater.ReportStatus(new UpdateService.UpdateStatus(
+            UpdateService.UpdateStage.Checking,
+            "Checking for updates..."));
         var result = await _updater.CheckAsync();
+        lock (_updateLock)
+        {
+            if (result.Outcome == UpdateService.CheckOutcome.UpdateAvailable
+                && result.LatestTag is { } tag)
+            {
+                _availableUpdate = new UpdateCandidate(tag, result.AssetApiUrl, result.AssetSha256);
+            }
+            else if (result.Outcome == UpdateService.CheckOutcome.UpToDate)
+            {
+                _availableUpdate = null;
+            }
+        }
+        _updater.ReportStatus(result.Outcome switch
+        {
+            UpdateService.CheckOutcome.UpdateAvailable => new UpdateService.UpdateStatus(
+                UpdateService.UpdateStage.Available,
+                $"{result.LatestTag} is available.",
+                result.LatestTag),
+            UpdateService.CheckOutcome.UpToDate => new UpdateService.UpdateStatus(
+                UpdateService.UpdateStage.UpToDate,
+                $"You're using the latest version (v{UpdateService.CurrentVersion}).",
+                result.LatestTag),
+            _ => new UpdateService.UpdateStatus(
+                UpdateService.UpdateStage.Failed,
+                "Update check failed. Please try again."),
+        });
         await _ui.InvokeAsync(() =>
         {
             switch (result.Outcome)
             {
                 case UpdateService.CheckOutcome.UpdateAvailable:
-                    _availableUpdateTag = result.LatestTag;
-                    _availableAssetUrl = result.AssetApiUrl;
-                    _availableAssetSha256 = result.AssetSha256;
                     if (silent)
                         Notify("Update available", $"{result.LatestTag} is available. Tray menu → Update to {result.LatestTag}…");
                     break;
                 case UpdateService.CheckOutcome.UpToDate:
-                    _availableUpdateTag = null;
-                    _availableAssetUrl = null;
-                    _availableAssetSha256 = null;
                     break;
                 case UpdateService.CheckOutcome.CheckFailed:
                     break;
@@ -1179,10 +1243,23 @@ public sealed class AppController : IDisposable
 
     private void PromptAndApplyUpdate(string tag)
     {
-        if (_availableAssetUrl is null ||
-            !UpdateService.UsesPinnedPublisherVerification && _availableAssetSha256 is null)
+        UpdateCandidate? update;
+        lock (_updateLock)
         {
-            Notify("Update unavailable", $"{tag} has no verifiable VoiceInput.exe asset.");
+            if (_updateApplyTask is { IsCompleted: false })
+                return;
+            update = _availableUpdate is { } candidate
+                && string.Equals(candidate.Tag, tag, StringComparison.OrdinalIgnoreCase)
+                    ? candidate
+                    : null;
+        }
+
+        if (update?.AssetUrl is null ||
+            !UpdateService.UsesPinnedPublisherVerification && update.AssetSha256 is null)
+        {
+            string message = $"{tag} has no verifiable VoiceInput.exe asset.";
+            _updater.ReportFailure(message);
+            Notify("Update unavailable", message);
             return;
         }
 
@@ -1192,19 +1269,36 @@ public sealed class AppController : IDisposable
         if (answer != MessageBoxResult.Yes) return;
 
         Notify("Updating…", $"Downloading {tag}. The app will restart when it's ready.");
-        _ = ApplyUpdateAsync(tag);
+        lock (_updateLock)
+        {
+            if (_updateApplyTask is { IsCompleted: false })
+                return;
+            _updateApplyTask = ApplyUpdateAsync(update);
+        }
     }
 
-    private async Task ApplyUpdateAsync(string tag)
+    private async Task ApplyUpdateAsync(UpdateCandidate update)
     {
-        bool ok = _availableAssetUrl is not null &&
-            await _updater.DownloadAndApplyAsync(_availableAssetUrl, _availableAssetSha256);
-        _ = _ui.BeginInvoke(() =>
+        bool ok = update.AssetUrl is not null && await _updater.DownloadAndApplyAsync(
+            update.Tag,
+            update.AssetUrl,
+            update.AssetSha256);
+        if (ok)
         {
-            if (ok) Application.Current.Shutdown();   // detached helper replaces the exe and relaunches
-            else Notify("Update failed",
-                $"Couldn't download {tag}. Check your connection and try again.");
-        });
+            // Let the Settings window render the restart state before the detached helper takes over.
+            await _ui.InvokeAsync(() => { }, DispatcherPriority.Render);
+            await Task.Delay(750);
+            await _ui.InvokeAsync(Application.Current.Shutdown);
+            return;
+        }
+
+        // DownloadAndApplyAsync has already published the retryable failure. Release the
+        // single-flight guard before the UI can dispatch a click on that newly enabled button.
+        lock (_updateLock)
+            _updateApplyTask = null;
+        await _ui.InvokeAsync(() => Notify(
+            "Update failed",
+            $"Couldn't download {update.Tag}. Check your connection and try again."));
     }
 
     // ---------------- Learn from edits ----------------
