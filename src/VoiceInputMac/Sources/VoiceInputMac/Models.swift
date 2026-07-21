@@ -323,6 +323,21 @@ enum PttRouter {
     }
 }
 
+enum VoiceActivationPolicy {
+    private static let windowsAppBundleIdentifiers: Set<String> = [
+        "com.microsoft.rdc.macos",
+        "com.microsoft.rdc.macos.beta",
+    ]
+
+    static func shouldSuppress(
+        action: PttAction,
+        frontmostBundleIdentifier: String?
+    ) -> Bool {
+        action == .start
+            && frontmostBundleIdentifier.map(windowsAppBundleIdentifiers.contains) == true
+    }
+}
+
 enum SettingsValidation {
     static func error(in settings: AppSettings) -> String? {
         let names = settings.profiles.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }

@@ -125,12 +125,29 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(PttRouter.action(mode: .hold, gesture: .pressed, dictating: false, state: .idle), .start)
         XCTAssertEqual(PttRouter.action(mode: .hold, gesture: .cancelled, dictating: true, state: .listening), .cancel)
         XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .pressed, dictating: false, state: .idle), .none)
+        XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .released, dictating: false, state: .idle), .start)
         XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .released, dictating: true, state: .listening), .stop)
         XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .recoveredRelease,
                                         dictating: false, state: .idle), .none)
         XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .recoveredRelease,
                                         dictating: true, state: .listening), .none)
         XCTAssertEqual(PttRouter.action(mode: .toggle, gesture: .released, dictating: false, state: .refining), .busy)
+    }
+
+    func testWindowsAppSuppressesOnlyNewLocalVoiceActivation() {
+        for bundleIdentifier in ["com.microsoft.rdc.macos", "com.microsoft.rdc.macos.beta"] {
+            XCTAssertTrue(VoiceActivationPolicy.shouldSuppress(
+                action: .start, frontmostBundleIdentifier: bundleIdentifier))
+            for action in [PttAction.stop, .cancel, .none, .busy] {
+                XCTAssertFalse(VoiceActivationPolicy.shouldSuppress(
+                    action: action, frontmostBundleIdentifier: bundleIdentifier))
+            }
+        }
+
+        XCTAssertFalse(VoiceActivationPolicy.shouldSuppress(
+            action: .start, frontmostBundleIdentifier: "com.microsoft.VSCode"))
+        XCTAssertFalse(VoiceActivationPolicy.shouldSuppress(
+            action: .start, frontmostBundleIdentifier: nil))
     }
 
     func testActivationCycleEmitsOnlyCleanReleaseForControlShortcut() {

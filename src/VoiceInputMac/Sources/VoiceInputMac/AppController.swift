@@ -148,8 +148,16 @@ final class AppController: NSObject {
 
     private func performGesture(_ gesture: PttGesture) async {
         if paused { return }
-        switch PttRouter.action(mode: settings.activeProfile.pttMode, gesture: gesture,
-                                dictating: dictating, state: state) {
+        let action = PttRouter.action(mode: settings.activeProfile.pttMode, gesture: gesture,
+                                      dictating: dictating, state: state)
+        if VoiceActivationPolicy.shouldSuppress(
+            action: action,
+            frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        ) {
+            AppLog.write("voice activation ignored while Windows App is frontmost")
+            return
+        }
+        switch action {
         case .start: await startDictation()
         case .stop: await stopDictation()
         case .cancel: await cancelDictation()
