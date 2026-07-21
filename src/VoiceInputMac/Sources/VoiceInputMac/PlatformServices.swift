@@ -189,22 +189,23 @@ final class KeyboardMonitor {
         capsLockFlagState = CGEventSource.flagsState(.combinedSessionState)
             .contains(.maskAlphaShift)
         mouseButtonCycle.reconcile(pressedButtonMask: NSEvent.pressedMouseButtons)
-        let mask = (1 << CGEventType.flagsChanged.rawValue)
-            | (1 << CGEventType.keyDown.rawValue)
-            | (1 << CGEventType.keyUp.rawValue)
-            | (1 << CGEventType.leftMouseDown.rawValue)
-            | (1 << CGEventType.leftMouseUp.rawValue)
-            | (1 << CGEventType.rightMouseDown.rawValue)
-            | (1 << CGEventType.rightMouseUp.rawValue)
-            | (1 << CGEventType.otherMouseDown.rawValue)
-            | (1 << CGEventType.otherMouseUp.rawValue)
-            | (1 << CGEventType.tapDisabledByTimeout.rawValue)
-            | (1 << CGEventType.tapDisabledByUserInput.rawValue)
+        var mask = CGEventMask(0)
+        mask |= CGEventMask(1) << CGEventType.flagsChanged.rawValue
+        mask |= CGEventMask(1) << CGEventType.keyDown.rawValue
+        mask |= CGEventMask(1) << CGEventType.keyUp.rawValue
+        mask |= CGEventMask(1) << CGEventType.leftMouseDown.rawValue
+        mask |= CGEventMask(1) << CGEventType.leftMouseUp.rawValue
+        mask |= CGEventMask(1) << CGEventType.rightMouseDown.rawValue
+        mask |= CGEventMask(1) << CGEventType.rightMouseUp.rawValue
+        mask |= CGEventMask(1) << CGEventType.otherMouseDown.rawValue
+        mask |= CGEventMask(1) << CGEventType.otherMouseUp.rawValue
+        mask |= CGEventMask(1) << CGEventType.tapDisabledByTimeout.rawValue
+        mask |= CGEventMask(1) << CGEventType.tapDisabledByUserInput.rawValue
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
-            eventsOfInterest: CGEventMask(mask),
+            eventsOfInterest: mask,
             callback: keyboardTapCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
