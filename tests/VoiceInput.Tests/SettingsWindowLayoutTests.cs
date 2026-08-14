@@ -27,7 +27,106 @@ public sealed class SettingsWindowLayoutTests
         VerifyUpdateResults();
         VerifyUpdateLifecycle();
         VerifyModelDownloadProgress();
+        VerifyEntraAccountSwitch();
     });
+
+    private static void VerifyEntraAccountSwitch()
+    {
+        EnsureWindowsDirectoryEnvironment();
+        string root = Path.Combine(Path.GetTempPath(), "VoiceInput.Tests", Guid.NewGuid().ToString("N"));
+        using var manager = new FunAsrRuntimeManager(
+            root,
+            new HttpClient(new OfflineHandler()),
+            () => long.MaxValue,
+            (_, _) => Task.CompletedTask);
+        string? requestedTenant = null;
+        var actions = new SettingsWindowActions(
+            () => false,
+            _ => { },
+            () => Task.FromResult(new UpdateService.CheckResult(
+                UpdateService.CheckOutcome.UpToDate,
+                $"v{UpdateService.CurrentVersion}",
+                UpdateService.CurrentVersion,
+                null)),
+            _ => { },
+            () => { },
+            _ => Task.CompletedTask,
+            _ => { },
+            () => null,
+            () => 0,
+            () => { },
+            _ => Task.FromResult(new CorrectionLearningReview(string.Empty, [])),
+            SwitchEntraAccount: (tenant, _) =>
+            {
+                requestedTenant = tenant;
+                return Task.FromResult("person@example.test");
+            });
+        var settings = new AppSettings
+        {
+            Engine = SpeechEngineKind.Azure,
+            AzureAuthMode = AzureAuthMode.EntraId,
+            AzureEndpoint = "https://example.test/",
+            AzureTenantId = "speech-tenant",
+            TranscribeAuthMode = AzureAuthMode.EntraId,
+            TranscribeEndpoint = "https://example.test/",
+            TranscribeModel = "deployment",
+            TranscribeTenantId = "foundry-tenant",
+        };
+        var window = new SettingsWindow(settings, _ => { }, manager, actions)
+        {
+            ShowInTaskbar = false,
+        };
+
+        try
+        {
+            window.Show();
+            var azureSwitch = Assert.IsType<Button>(window.FindName("AzureSwitchAccountButton"));
+            var azureStatus = Assert.IsType<TextBlock>(window.FindName("AzureAccountStatusText"));
+            Assert.True(azureSwitch.IsEnabled);
+            azureSwitch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("speech-tenant", requestedTenant);
+            Assert.Contains("person@example.test", azureStatus.Text);
+
+            Assert.IsType<ComboBox>(window.FindName("EngineList")).SelectedIndex = 2;
+            var transcribeSwitch = Assert.IsType<Button>(window.FindName("TranscribeSwitchAccountButton"));
+            var transcribeStatus = Assert.IsType<TextBlock>(window.FindName("TranscribeAccountStatusText"));
+            Assert.True(transcribeSwitch.IsEnabled);
+            transcribeSwitch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("foundry-tenant", requestedTenant);
+            Assert.Contains("person@example.test", transcribeStatus.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+
+        bool cancellationObserved = false;
+        var pendingSwitch = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellableActions = actions with
+        {
+            SwitchEntraAccount = (_, cancellationToken) =>
+            {
+                cancellationToken.Register(() =>
+                {
+                    cancellationObserved = true;
+                    pendingSwitch.TrySetCanceled(cancellationToken);
+                });
+                return pendingSwitch.Task;
+            },
+        };
+        var cancellableWindow = new SettingsWindow(settings, _ => { }, manager, cancellableActions)
+        {
+            ShowInTaskbar = false,
+        };
+        cancellableWindow.Show();
+        Assert.IsType<Button>(cancellableWindow.FindName("AzureSwitchAccountButton"))
+            .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+        cancellableWindow.Close();
+
+        Assert.True(cancellationObserved);
+    }
 
     private static void VerifyLargeUnsupportedVocabularyPersists()
     {

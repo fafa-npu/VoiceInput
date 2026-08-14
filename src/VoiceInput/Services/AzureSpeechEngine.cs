@@ -17,13 +17,16 @@ public sealed class AzureSpeechEngine : ISpeechEngine
 
     private readonly Func<SpeechConfig> _configFactory;
     private readonly IReadOnlyList<string> _vocabularyEntries;
+    private readonly int _startTimeoutMs;
 
     private AzureSpeechEngine(
         Func<SpeechConfig> configFactory,
-        IReadOnlyList<string>? vocabularyEntries = null)
+        IReadOnlyList<string>? vocabularyEntries = null,
+        int startTimeoutMs = 8000)
     {
         _configFactory = configFactory;
         _vocabularyEntries = vocabularyEntries ?? Array.Empty<string>();
+        _startTimeoutMs = startTimeoutMs;
     }
 
     /// <summary>Account-key (local auth) engine.</summary>
@@ -39,9 +42,13 @@ public sealed class AzureSpeechEngine : ISpeechEngine
         string endpoint,
         TokenCredential credential,
         IReadOnlyList<string>? vocabularyEntries = null) =>
-        new(() => SpeechConfig.FromEndpoint(new Uri(endpoint), credential), vocabularyEntries);
+        new(
+            () => SpeechConfig.FromEndpoint(new Uri(endpoint), credential),
+            vocabularyEntries,
+            startTimeoutMs: 150000);
 
     public bool NeedsAudioFeed => true;
+    public int StartTimeoutMs => _startTimeoutMs;
     public event Action<string>? Partial;
     public event Action<string>? Final;
     public event Action<SpeechFault>? Fault;
@@ -127,10 +134,12 @@ public sealed class AzureSpeechEngine : ISpeechEngine
                 ? $"Vocabulary azure-phrase-list requested={requested} applied={result.AppliedCount} limit={MaxVocabularyPhrases}"
                 : $"Vocabulary azure-phrase-list requested={requested} applied={result.AppliedCount}";
 
-    private static SpeechFault MapFault(CancellationErrorCode code, string detail) => code switch
+    internal static SpeechFault MapFault(CancellationErrorCode code, string detail) => code switch
     {
-        CancellationErrorCode.AuthenticationFailure => new(SpeechFaultKind.Authentication,
-            "Azure Speech authentication failed. Check the selected account, key, and resource settings.", detail),
+        CancellationErrorCode.AuthenticationFailure or CancellationErrorCode.Forbidden => new(
+            SpeechFaultKind.Authentication,
+            "Azure Speech rejected authentication. Check the key or switch Azure account in Settings; an administrator may also need to grant resource access.",
+            detail),
         CancellationErrorCode.TooManyRequests => new(SpeechFaultKind.Quota,
             "Azure Speech is rate-limited or out of quota. Try again later or check the resource quota.", detail),
         CancellationErrorCode.ConnectionFailure or CancellationErrorCode.ServiceTimeout => new(SpeechFaultKind.Network,

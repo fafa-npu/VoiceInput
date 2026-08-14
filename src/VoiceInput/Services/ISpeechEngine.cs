@@ -6,6 +6,10 @@ public interface ISpeechEngine : IDisposable
     /// <summary>True if the engine consumes PCM via <see cref="Feed"/> (Azure). False if it opens its own mic (Windows).</summary>
     bool NeedsAudioFeed { get; }
 
+    /// <summary>Upper bound for engine startup. Entra-backed streaming may include a user-completed
+    /// WAM/MFA challenge and therefore overrides the short default.</summary>
+    int StartTimeoutMs => 8000;
+
     /// <summary>Upper bound the controller allows <see cref="StopAsync"/> to run before force-disposing.
     /// Streaming engines stop fast; a batch engine that transcribes on stop overrides this higher.</summary>
     int StopTimeoutMs => 2500;

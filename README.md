@@ -175,6 +175,15 @@ network request. **Review learning** sends them only to the configured language-
 never clears the history automatically.
 Secret fields are DPAPI-encrypted per Windows user or stored in macOS Keychain.
 
+On Windows, Microsoft Entra authentication uses Windows Authentication Manager (WAM), the signed-in
+work/school account, and an OS-protected token cache. A tenant Conditional Access policy can still
+require MFA or another explicit challenge, but gujiguji serializes that interaction. Foundry batch
+transcription begins the check as soon as PCM capture is live and retains that recording while the
+single WAM dialog completes. Use **Switch Azure account…** in Model Selection only when a different
+work/school account should access the configured resource. The WAM integration is pinned to
+`Azure.Identity.Broker` 1.3.1 (NuGet package: 73,665 bytes; SHA-256
+`2348dc1830c3966904e89fd0c952661cac13d5eb7970e284743ab42112469cd4`).
+
 On macOS, Azure Speech with Microsoft Entra ID also requires the Speech resource's **Region** and
 full **Azure Resource ID** (for example `/subscriptions/.../resourceGroups/.../providers/Microsoft.CognitiveServices/accounts/...`).
 The native Speech SDK uses these to construct Microsoft's required `aad#resource-id#token`
