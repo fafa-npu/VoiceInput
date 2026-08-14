@@ -138,7 +138,7 @@ public sealed class AzureSpeechEngine : ISpeechEngine
     {
         CancellationErrorCode.AuthenticationFailure or CancellationErrorCode.Forbidden => new(
             SpeechFaultKind.Authentication,
-            "Azure Speech rejected authentication. Check the key or switch Azure account in Settings; an administrator may also need to grant resource access.",
+            "Azure Speech rejected authentication. Check the key or use Switch Azure account in Settings; an administrator may also need to grant resource access.",
             detail),
         CancellationErrorCode.TooManyRequests => new(SpeechFaultKind.Quota,
             "Azure Speech is rate-limited or out of quota. Try again later or check the resource quota.", detail),

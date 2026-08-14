@@ -843,7 +843,14 @@ public sealed class SettingsWindowLayoutTests
         Assert.Equal(Visibility.Visible, transcribeFields.Visibility);
         Assert.Contains("Configure GPT-4o Transcribe", selectionStatus.Text, StringComparison.Ordinal);
         Layout(window, content, 720, 520);
-        Assert.Equal(0, modelSelectionPage.ScrollableHeight);
+        var transcribeSwitchAccount = Assert.IsType<Button>(window.FindName("TranscribeSwitchAccountButton"));
+        Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
+        Rect transcribeSwitchBounds = transcribeSwitchAccount.TransformToAncestor(modelSelectionPage)
+            .TransformBounds(new Rect(transcribeSwitchAccount.RenderSize));
+        Assert.True(
+            transcribeSwitchBounds.Top >= 0 && transcribeSwitchBounds.Bottom <= modelSelectionPage.ViewportHeight,
+            $"The account recovery action is outside the scroll viewport: {transcribeSwitchBounds}, "
+            + $"viewport height {modelSelectionPage.ViewportHeight:F1}px.");
         engineList.SelectedIndex = 3;
         Assert.Equal(Visibility.Visible, localModels.Visibility);
         Assert.Contains("Download Qwen3-ASR 0.6B", selectionStatus.Text, StringComparison.Ordinal);

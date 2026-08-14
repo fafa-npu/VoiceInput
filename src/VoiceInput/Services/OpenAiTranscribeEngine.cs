@@ -318,7 +318,7 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
                 {
                     System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden => new(
                         SpeechFaultKind.Authentication,
-                        "Azure rejected transcription authentication. Check the API key or switch Azure account in Settings; an administrator may also need to grant resource access.",
+                        "Azure rejected transcription authentication. Check the API key or use Switch Azure account in Settings; an administrator may also need to grant resource access.",
                         detail),
                     System.Net.HttpStatusCode.TooManyRequests => new(
                         SpeechFaultKind.Quota,
