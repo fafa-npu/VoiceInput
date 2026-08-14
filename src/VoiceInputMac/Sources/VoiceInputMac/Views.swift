@@ -124,7 +124,7 @@ enum AppUpdateViewState: Equatable {
 }
 
 struct SettingsRuntimeState: Equatable {
-    var appVersion = "0.2.18"
+    var appVersion = "0.2.19"
     var localRuntimeSummary = "Local runtimes · Apple silicon"
     var localModels = LocalModelViewState.defaults
     var installingModelId: String?

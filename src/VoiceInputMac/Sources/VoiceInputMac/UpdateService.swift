@@ -135,7 +135,7 @@ final class UpdateService {
 
     static var currentVersion: [Int] {
         parseVersion(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-                     ?? "0.2.18") ?? [0]
+                     ?? "0.2.19") ?? [0]
     }
 
     static func parseVersion(_ value: String?) -> [Int]? {
