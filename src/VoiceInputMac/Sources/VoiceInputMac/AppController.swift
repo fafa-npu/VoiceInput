@@ -61,7 +61,7 @@ final class AppController: NSObject {
         let hasAccessibility = PlatformPermissions.hasAccessibility
         let hasInputMonitoring = PlatformPermissions.hasInputMonitoring
         ensureKeyboardMonitor(requestIfNeeded: false)
-        AppLog.write("=== gujiguji macOS 0.2.18 started; profile=\(settings.activeProfile.name) "
+        AppLog.write("=== gujiguji macOS 0.2.19 started; profile=\(settings.activeProfile.name) "
                      + "engine=\(settings.engine.rawValue) language=\(settings.language) "
                      + "accessibility=\(hasAccessibility) inputMonitoring=\(hasInputMonitoring) ===")
         // A rebuilt or newly signed app can lose its TCC identity even when
@@ -914,7 +914,7 @@ final class AppController: NSObject {
             ? "FunASR \(FunAsrCatalog.runtimeVersion)"
             : "FunASR runtime not installed"
         return SettingsRuntimeState(
-            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.18",
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.19",
             localRuntimeSummary: "\(funAsrRuntime) · \(Qwen3AsrRuntimeManager.runtimeVersion) · Metal/CPU",
             localModels: FunAsrCatalog.models.map {
                 LocalModelViewState(id: $0.id, name: $0.displayName, detail: $0.description,

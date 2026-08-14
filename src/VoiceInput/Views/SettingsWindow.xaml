@@ -401,12 +401,24 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Grid.Row="0" Text="Endpoint" Style="{StaticResource FieldLabel}" />
                                 <TextBox x:Name="AzureEndpointBox" Grid.Row="0" Grid.Column="1"
                                          ToolTip="https://resource.cognitiveservices.azure.com/" />
                                 <TextBlock Grid.Row="1" Text="Tenant ID" Style="{StaticResource FieldLabel}" />
                                 <TextBox x:Name="AzureTenantIdBox" Grid.Row="1" Grid.Column="1" />
+                                <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,7,0,0">
+                                    <Button x:Name="AzureSwitchAccountButton"
+                                            Content="Switch Azure account…"
+                                            Style="{StaticResource SecondaryButton}"
+                                            HorizontalAlignment="Left"
+                                            Click="OnSwitchAzureAccount" />
+                                    <TextBlock x:Name="AzureAccountStatusText"
+                                               Text="WAM securely remembers the selected account on this PC."
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                </StackPanel>
                             </Grid>
                         </Grid>
                     </StackPanel>
@@ -420,6 +432,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -449,6 +462,18 @@
                                          AutomationProperties.LabeledBy="{Binding ElementName=TranscribeApiKeyLabel}" />
                             <TextBlock x:Name="TranscribeTenantLabel" Grid.Row="5" Text="Tenant ID" Style="{StaticResource FieldLabel}" />
                             <TextBox x:Name="TranscribeTenantIdBox" Grid.Row="5" Grid.Column="1" />
+                            <StackPanel x:Name="TranscribeEntraActionsPanel"
+                                        Grid.Row="6" Grid.Column="1" Margin="0,7,0,0">
+                                <Button x:Name="TranscribeSwitchAccountButton"
+                                        Content="Switch Azure account…"
+                                        Style="{StaticResource SecondaryButton}"
+                                        HorizontalAlignment="Left"
+                                        Click="OnSwitchTranscribeAccount" />
+                                <TextBlock x:Name="TranscribeAccountStatusText"
+                                           Text="WAM securely remembers the selected account on this PC."
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            </StackPanel>
                         </Grid>
                     </StackPanel>
 

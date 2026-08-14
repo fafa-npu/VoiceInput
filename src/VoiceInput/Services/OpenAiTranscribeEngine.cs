@@ -23,33 +23,44 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
     private const string Scope = "https://cognitiveservices.azure.com/.default";
     // ponytail: bump if Foundry rejects gpt-4o-transcribe at this version.
     private const string ApiVersion = "2025-03-01-preview";
-    private const int AuthTimeoutSec = 8;    // token must be cached/silent; if expired we bail fast and re-auth off-lock
     private const int HttpTimeoutSec = 20;   // upper bound on the transcription POST
+    private static readonly TimeSpan TokenRefreshSkew = TimeSpan.FromMinutes(2);
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(25) };
 
     private readonly string _url;
     private readonly Func<HttpRequestMessage, CancellationToken, Task> _applyAuth;
+    private readonly Func<CancellationToken, Task<AccessToken?>>? _preauthenticate;
+    private readonly Func<CancellationToken, Task<AccessToken>>? _getTokenSilently;
     private readonly IReadOnlyList<string> _vocabularyEntries;
     private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _send;
     private readonly MemoryStream _buffer = new();
     private readonly object _lock = new();
     private string _language = string.Empty;
-    private volatile bool _closed;
+    private bool _closed;   // guarded by _lock so Feed and the final PCM snapshot have one boundary
     private volatile bool _canceled;   // set on abort/chord-cancel: discard, skip the network call
     private CancellationTokenSource? _requestCts;
-
-    /// <summary>Raised when acquiring the Entra token fails/times out (expired sign-in) so the app
-    /// can notify the user and re-authenticate in the background, off the dictation lock.</summary>
-    public event Action? AuthExpired;
+    private CancellationTokenSource? _preauthenticationCts;
+    private Task<AccessToken?>? _preauthenticationTask;
 
     internal OpenAiTranscribeEngine(
         string url,
         Func<HttpRequestMessage, CancellationToken, Task> applyAuth,
         IReadOnlyList<string>? vocabularyEntries = null,
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? send = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? send = null,
+        Func<CancellationToken, Task>? preauthenticate = null,
+        Func<CancellationToken, Task<AccessToken?>>? preauthenticateAndGetToken = null,
+        Func<CancellationToken, Task<AccessToken>>? getTokenSilently = null)
     {
         _url = url;
         _applyAuth = applyAuth;
+        _preauthenticate = preauthenticateAndGetToken ?? (preauthenticate is null
+            ? null
+            : async cancellationToken =>
+            {
+                await preauthenticate(cancellationToken).ConfigureAwait(false);
+                return (AccessToken?)null;
+            });
+        _getTokenSilently = getTokenSilently;
         _vocabularyEntries = vocabularyEntries ?? Array.Empty<string>();
         _send = send ?? ((request, cancellationToken) => Http.SendAsync(request, cancellationToken));
     }
@@ -59,12 +70,23 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         string endpoint,
         string deployment,
         TokenCredential credential,
-        IReadOnlyList<string>? vocabularyEntries = null) =>
-        new(BuildUrl(endpoint, deployment), async (req, ct) =>
+        IReadOnlyList<string>? vocabularyEntries = null)
+    {
+        Func<CancellationToken, Task<AccessToken>>? getTokenSilently =
+            credential is SingleFlightTokenCredential coordinated
+                ? async ct => await coordinated.GetTokenSilentlyAsync(
+                    new TokenRequestContext(new[] { Scope }),
+                    ct)
+                : null;
+        return new(BuildUrl(endpoint, deployment), async (req, ct) =>
         {
             var token = await credential.GetTokenAsync(new TokenRequestContext(new[] { Scope }), ct);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
-        }, vocabularyEntries);
+        }, vocabularyEntries, preauthenticateAndGetToken: async ct =>
+        {
+            return await credential.GetTokenAsync(new TokenRequestContext(new[] { Scope }), ct);
+        }, getTokenSilently: getTokenSilently);
+    }
 
     /// <summary>Account-key auth (the Azure OpenAI <c>api-key</c> header).</summary>
     public static OpenAiTranscribeEngine ForKey(
@@ -85,10 +107,9 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     public bool HasInterimResults => false;
 
-    // Batch transcription runs inside StopAsync while the dictation lock is held, so it must return
-    // promptly. Token acquisition and the HTTP POST are each hard-bounded below; this is the outer
-    // ceiling the controller enforces.
-    public int StopTimeoutMs => 30000;
+    // A rare Conditional Access challenge may require the user to complete WAM authentication.
+    // Keep this recording alive long enough to finish that one prompt and submit the same audio.
+    public int StopTimeoutMs => 150000;
 
 #pragma warning disable CS0067 // batch engine emits no interim hypotheses
     public event Action<string>? Partial;
@@ -98,57 +119,143 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
     public Task StartAsync(string language)
     {
-        _closed = false;
-        _canceled = false;
-        _language = TwoLetter(language);
-        lock (_lock) { _buffer.SetLength(0); }
+        DisposePreauthentication(cancel: true);
+        lock (_lock)
+        {
+            _closed = false;
+            _canceled = false;
+            _language = TwoLetter(language);
+            _buffer.SetLength(0);
+        }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Starts the Entra token check while PCM is already being buffered. If WAM interaction is
+    /// required it appears near the start of dictation, and <see cref="StopAsync"/> awaits this
+    /// exact attempt instead of opening a second dialog.
+    /// </summary>
+    internal void BeginAuthentication()
+    {
+        if (_preauthenticate is null) return;
+        lock (_lock)
+        {
+            if (_closed || _canceled || _preauthenticationTask is not null) return;
+            _preauthenticationCts = new CancellationTokenSource();
+            _preauthenticationTask = PreauthenticateCoreAsync(_preauthenticationCts.Token);
+        }
+    }
+
+    private async Task<AccessToken?> PreauthenticateCoreAsync(CancellationToken cancellationToken)
+    {
+        // Avoid entering Azure.Identity while holding _lock in BeginAuthentication.
+        await Task.Yield();
+        return await _preauthenticate!(cancellationToken).ConfigureAwait(false);
     }
 
     public void Cancel()
     {
+        CancellationTokenSource? requestCts;
+        CancellationTokenSource? preauthenticationCts;
         lock (_lock)
         {
             _canceled = true;
-            _requestCts?.Cancel();
+            requestCts = _requestCts;
+            preauthenticationCts = _preauthenticationCts;
         }
+        // Cancellation can run continuations inline. Never invoke it while holding _lock, and
+        // cancel preauthentication first so StopAsync cannot clear it after request cancellation.
+        try { preauthenticationCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+        try { requestCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     public void Feed(byte[] pcm16kMono)
     {
-        if (_closed) return;
-        lock (_lock) { _buffer.Write(pcm16kMono, 0, pcm16kMono.Length); }
+        lock (_lock)
+        {
+            if (_closed) return;
+            _buffer.Write(pcm16kMono, 0, pcm16kMono.Length);
+        }
     }
 
     public async Task StopAsync()
     {
-        _closed = true;
-        if (_canceled) return;   // aborted / chord-cancelled: transcript is discarded, so skip the network call
-
         byte[] pcm;
-        lock (_lock) { pcm = _buffer.ToArray(); }
-        if (pcm.Length < MinimumPcmBytes)
-        {
-            Fault?.Invoke(new(
-                SpeechFaultKind.Unknown,
-                "Recording was too short to transcribe. Speak for at least half a second and try again."));
-            return;
-        }
-        if (!HasAudibleSignal(pcm))
-        {
-            Log.Write("OpenAiTranscribeEngine: silent recording skipped before transcription.");
-            return;
-        }
-
-        var requestCts = new CancellationTokenSource(TimeSpan.FromSeconds(HttpTimeoutSec));
+        CancellationTokenSource requestCts;
         lock (_lock)
         {
+            // Linearize the final audio boundary: a Feed either completes before this snapshot or
+            // observes _closed and is ignored. No callback can append after the submitted snapshot.
+            _closed = true;
+            pcm = _buffer.ToArray();
+            if (_canceled) return;   // aborted/chord-cancelled: discard without a network call
+            requestCts = new CancellationTokenSource();
             _requestCts = requestCts;
-            if (_canceled) requestCts.Cancel();
         }
 
         try
         {
+            // If WAM appeared at PTT start, releasing the key while selecting an account must not
+            // cancel that exact sign-in. Finish it even when the captured audio is short or silent;
+            // only an explicit Escape/chord cancellation aborts authentication.
+            AccessToken? preauthenticatedToken = null;
+            bool usedSilentTokenLookup = false;
+            Task<AccessToken?>? preauthentication;
+            lock (_lock) { preauthentication = _preauthenticationTask; }
+            if (preauthentication is not null)
+            {
+                try
+                {
+                    preauthenticatedToken = await preauthentication.WaitAsync(requestCts.Token);
+                }
+                catch (OperationCanceledException) when (requestCts.IsCancellationRequested || _canceled)
+                {
+                    throw;
+                }
+                catch (Exception authEx)
+                {
+                    // WAM can occasionally report a teardown error after it already committed the
+                    // token to MSAL's cache. One strict silent lookup can preserve this recording;
+                    // it never starts another interactive flight or opens a second dialog.
+                    if (_getTokenSilently is null)
+                    {
+                        ReportAuthenticationFailure(authEx);
+                        return;
+                    }
+                    try
+                    {
+                        preauthenticatedToken = await _getTokenSilently(requestCts.Token);
+                        usedSilentTokenLookup = true;
+                        Log.Write("OpenAiTranscribeEngine recovered the completed sign-in from the silent token cache.");
+                    }
+                    catch (OperationCanceledException) when (requestCts.IsCancellationRequested || _canceled)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        ReportAuthenticationFailure(authEx);
+                        return;
+                    }
+                }
+            }
+
+            requestCts.Token.ThrowIfCancellationRequested();
+            if (pcm.Length < MinimumPcmBytes)
+            {
+                Fault?.Invoke(new(
+                    SpeechFaultKind.Unknown,
+                    "Recording was too short to transcribe. Speak for at least half a second and try again."));
+                return;
+            }
+            if (!HasAudibleSignal(pcm))
+            {
+                Log.Write("OpenAiTranscribeEngine: silent recording skipped before transcription.");
+                return;
+            }
+
             byte[] wav = PcmWave.Wrap(pcm, AudioCapture.TargetSampleRate);
 
             using var form = new MultipartFormDataContent();
@@ -163,14 +270,30 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
 
             using var req = new HttpRequestMessage(HttpMethod.Post, _url) { Content = form };
 
-            // Acquire the token with a hard timeout. A valid cached token is instant; if the sign-in
-            // has expired the credential would otherwise block on an interactive prompt — bound it so
-            // StopAsync (which holds the dictation lock) can never wedge, and hand re-auth to the app.
+            // Reuse the exact AccessToken returned by the early WAM attempt. A long recording can
+            // cross its expiry, so refresh it only through the strict silent cache path. Never call
+            // the interactive credential a second time for the same recording.
             try
             {
-                using var authCts = CancellationTokenSource.CreateLinkedTokenSource(requestCts.Token);
-                authCts.CancelAfter(TimeSpan.FromSeconds(AuthTimeoutSec));
-                await _applyAuth(req, authCts.Token);
+                if (preauthenticatedToken is { } token)
+                {
+                    if (NeedsTokenRefresh(token))
+                    {
+                        if (_getTokenSilently is null || usedSilentTokenLookup)
+                            throw new InvalidOperationException(
+                                "The cached Microsoft Entra access token is expired or too close to expiry.");
+
+                        token = await _getTokenSilently(requestCts.Token);
+                        usedSilentTokenLookup = true;
+                        if (NeedsTokenRefresh(token))
+                            throw new InvalidOperationException(
+                                "The silently refreshed Microsoft Entra access token is too close to expiry.");
+                        Log.Write("OpenAiTranscribeEngine silently refreshed an expiring access token.");
+                    }
+                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+                }
+                else
+                    await _applyAuth(req, requestCts.Token);
             }
             catch (OperationCanceledException) when (requestCts.IsCancellationRequested)
             {
@@ -178,23 +301,34 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
             }
             catch (Exception authEx)
             {
-                Log.Write($"OpenAiTranscribeEngine token acquisition failed ({authEx.GetType().Name}); requesting re-auth.");
-                Fault?.Invoke(new(SpeechFaultKind.Authentication,
-                    "Azure sign-in failed or expired. Sign in again from Settings.", authEx.Message));
-                AuthExpired?.Invoke();
+                ReportAuthenticationFailure(authEx);
                 return;
             }
 
             Log.Write($"Vocabulary gpt-request mode=Prompt termCount={_vocabularyEntries.Count} promptIncluded={promptIncluded}");
-            using var resp = await _send(req, requestCts.Token);
-            string json = await resp.Content.ReadAsStringAsync(requestCts.Token);
+            using var httpCts = CancellationTokenSource.CreateLinkedTokenSource(requestCts.Token);
+            httpCts.CancelAfter(TimeSpan.FromSeconds(HttpTimeoutSec));
+            using var resp = await _send(req, httpCts.Token);
+            string json = await resp.Content.ReadAsStringAsync(httpCts.Token);
             if (!resp.IsSuccessStatusCode)
             {
                 string detail = FormatHttpFailure(resp, json);
                 Log.Write($"OpenAiTranscribeEngine HTTP {detail}");
-                Fault?.Invoke(resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests
-                    ? new(SpeechFaultKind.Quota, "Transcription is rate-limited or out of quota.", detail)
-                    : new(SpeechFaultKind.Service, $"Transcription service returned HTTP {(int)resp.StatusCode}.", detail));
+                Fault?.Invoke(resp.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden => new(
+                        SpeechFaultKind.Authentication,
+                        "Azure rejected transcription authentication. Check the API key or use Switch Azure account in Settings; an administrator may also need to grant resource access.",
+                        detail),
+                    System.Net.HttpStatusCode.TooManyRequests => new(
+                        SpeechFaultKind.Quota,
+                        "Transcription is rate-limited or out of quota.",
+                        detail),
+                    _ => new(
+                        SpeechFaultKind.Service,
+                        $"Transcription service returned HTTP {(int)resp.StatusCode}.",
+                        detail),
+                });
                 return;
             }
 
@@ -218,6 +352,7 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         }
         finally
         {
+            DisposePreauthentication(cancel: false);
             lock (_lock)
             {
                 if (ReferenceEquals(_requestCts, requestCts))
@@ -227,14 +362,71 @@ public sealed class OpenAiTranscribeEngine : ISpeechEngine
         }
     }
 
+    private void ReportAuthenticationFailure(Exception exception)
+    {
+        Log.Write($"OpenAiTranscribeEngine token acquisition failed ({exception.GetType().Name}).");
+        Fault?.Invoke(new(
+            SpeechFaultKind.Authentication,
+            "Microsoft Entra sign-in did not complete. Try again or switch the Azure account in Settings.",
+            exception.Message));
+    }
+
     public void Dispose()
     {
-        _closed = true;
-        _buffer.Dispose();
+        lock (_lock) { _closed = true; }
+        DisposePreauthentication(cancel: true);
+        lock (_lock) { _buffer.Dispose(); }
+    }
+
+    private void DisposePreauthentication(bool cancel)
+    {
+        CancellationTokenSource? cancellation;
+        Task? task;
+        lock (_lock)
+        {
+            cancellation = _preauthenticationCts;
+            task = _preauthenticationTask;
+            _preauthenticationCts = null;
+            _preauthenticationTask = null;
+        }
+
+        if (cancel)
+        {
+            try { cancellation?.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+        if (task is not null)
+        {
+            if (task.IsCompleted)
+            {
+                if (task.IsFaulted) _ = task.Exception;
+                cancellation?.Dispose();
+            }
+            else
+            {
+                _ = task.ContinueWith(
+                    static (completed, state) =>
+                    {
+                        if (completed.IsFaulted) _ = completed.Exception;
+                        ((CancellationTokenSource?)state)?.Dispose();
+                    },
+                    cancellation,
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+        }
+        else
+        {
+            cancellation?.Dispose();
+        }
     }
 
     private static string TwoLetter(string lang) =>
         string.IsNullOrEmpty(lang) ? string.Empty : lang.Split('-')[0].ToLowerInvariant();
+
+    private static bool NeedsTokenRefresh(AccessToken token) =>
+        token.ExpiresOn <= DateTimeOffset.UtcNow + TokenRefreshSkew;
 
     private static bool HasAudibleSignal(byte[] pcm)
     {

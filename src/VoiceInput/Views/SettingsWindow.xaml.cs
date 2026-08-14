@@ -22,7 +22,8 @@ internal sealed record SettingsWindowActions(
     Func<int> CorrectionCount,
     Action ClearCorrections,
     Func<AppSettings, Task<CorrectionLearningReview>> ReviewCorrections,
-    UpdateService? Updates = null);
+    UpdateService? Updates = null,
+    Func<string?, CancellationToken, Task<string>>? SwitchEntraAccount = null);
 
 public partial class SettingsWindow : Window
 {
@@ -37,6 +38,7 @@ public partial class SettingsWindow : Window
     private readonly FunAsrRuntimeManager _funAsr;
     private readonly SettingsWindowActions _actions;
     private readonly LlmRefiner _refiner = new();
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly Dictionary<string, FunAsrInstallProgress> _modelProgress =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ModelRow> _modelRows =
@@ -46,6 +48,7 @@ public partial class SettingsWindow : Window
     private CorrectionLearningReview? _learningReview;
     private int _correctionCount;
     private bool _reviewingCorrections;
+    private bool _switchingEntraAccount;
     private bool _loading = true;
     private bool _closed;
 
@@ -220,6 +223,54 @@ public partial class SettingsWindow : Window
         OnDraftValueChanged(sender, e);
     }
 
+    private async void OnSwitchAzureAccount(object sender, RoutedEventArgs e) =>
+        await SwitchEntraAccountAsync(AzureTenantIdBox.Text, AzureAccountStatusText);
+
+    private async void OnSwitchTranscribeAccount(object sender, RoutedEventArgs e) =>
+        await SwitchEntraAccountAsync(TranscribeTenantIdBox.Text, TranscribeAccountStatusText);
+
+    private async Task SwitchEntraAccountAsync(string? tenantId, TextBlock status)
+    {
+        if (_actions.SwitchEntraAccount is null)
+        {
+            status.Foreground = ErrorBrush;
+            status.Text = "Account switching is unavailable in this build.";
+            return;
+        }
+
+        _switchingEntraAccount = true;
+        UpdateFieldVisibility();
+        status.Foreground = MutedBrush;
+        status.Text = "Waiting for Windows account selection…";
+        try
+        {
+            string account = await _actions.SwitchEntraAccount(
+                tenantId?.Trim(),
+                _lifetimeCancellation.Token);
+            if (_closed) return;
+            status.Foreground = SuccessBrush;
+            status.Text = $"Selected {account}. Future Azure requests will use this account.";
+        }
+        catch (OperationCanceledException)
+        {
+            if (_closed) return;
+            status.Foreground = AttentionBrush;
+            status.Text = "Account selection was cancelled; the current saved account was kept.";
+        }
+        catch (Exception exception)
+        {
+            Log.Write($"Microsoft Entra account switch failed ({exception.GetType().Name}).");
+            if (_closed) return;
+            status.Foreground = ErrorBrush;
+            status.Text = "Account selection failed. Close any existing sign-in window and try again.";
+        }
+        finally
+        {
+            _switchingEntraAccount = false;
+            if (!_closed) UpdateFieldVisibility();
+        }
+    }
+
     private void OnDraftValueChanged(object? sender, RoutedEventArgs e)
     {
         if (_loading)
@@ -277,6 +328,10 @@ public partial class SettingsWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         TranscribeTenantLabel.Visibility = TranscribeTenantIdBox.Visibility;
+        TranscribeEntraActionsPanel.Visibility = TranscribeTenantIdBox.Visibility;
+        bool canSwitchEntraAccount = _actions.SwitchEntraAccount is not null && !_switchingEntraAccount;
+        AzureSwitchAccountButton.IsEnabled = canSwitchEntraAccount;
+        TranscribeSwitchAccountButton.IsEnabled = canSwitchEntraAccount;
         LocalModelsPanel.Visibility = funAsr ? Visibility.Visible : Visibility.Collapsed;
 
         bool hasConnection = LlmRefiner.IsSupportedEndpoint(LlmBaseUrlBox.Text.Trim())
@@ -1347,6 +1402,8 @@ public partial class SettingsWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         _closed = true;
+        _lifetimeCancellation.Cancel();
+        _lifetimeCancellation.Dispose();
         _funAsr.ProgressChanged -= OnFunAsrProgress;
         if (_actions.Updates is { } updates)
             updates.StatusChanged -= OnUpdateStatusChanged;

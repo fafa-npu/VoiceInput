@@ -1,3 +1,5 @@
+using Azure.Core;
+using Microsoft.CognitiveServices.Speech;
 using VoiceInput.Services;
 
 namespace VoiceInput.Tests;
@@ -73,5 +75,43 @@ public sealed class AzureSpeechEngineTests
         Assert.Equal(
             "WARN Vocabulary azure-phrase-list requested=2 applied=1 exceptionType=InvalidOperationException",
             AzureSpeechEngine.FormatVocabularyLog(2, result));
+    }
+
+    [Fact]
+    public void EntraStartupAllowsAuthenticationToReachItsOwnDeadline()
+    {
+        using var key = AzureSpeechEngine.ForKey("key", "westus");
+        using var entra = AzureSpeechEngine.ForEntra(
+            "https://example.test/",
+            new StaticTokenCredential());
+
+        Assert.Equal(8_000, key.StartTimeoutMs);
+        Assert.Equal(150_000, entra.StartTimeoutMs);
+    }
+
+    [Theory]
+    [InlineData(CancellationErrorCode.AuthenticationFailure)]
+    [InlineData(CancellationErrorCode.Forbidden)]
+    public void EntraAuthorizationFailuresOfferAnExplicitRecoveryPath(CancellationErrorCode code)
+    {
+        SpeechFault fault = AzureSpeechEngine.MapFault(code, "detail");
+
+        Assert.Equal(SpeechFaultKind.Authentication, fault.Kind);
+        Assert.Contains("Switch Azure account in Settings", fault.UserMessage);
+    }
+
+    private sealed class StaticTokenCredential : TokenCredential
+    {
+        private static readonly AccessToken Token = new(
+            "token",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        public override AccessToken GetToken(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken) => Token;
+
+        public override ValueTask<AccessToken> GetTokenAsync(
+            TokenRequestContext requestContext,
+            CancellationToken cancellationToken) => ValueTask.FromResult(Token);
     }
 }

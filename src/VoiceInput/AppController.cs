@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using VoiceInput.Models;
 using VoiceInput.Services;
@@ -63,8 +64,8 @@ public sealed class AppController : IDisposable
     // (Windows dictation forbids overlapping audio-engine sessions).
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _finalsLock = new();   // guards _finals/_partial across engine + UI threads
-    private const int StartTimeoutMs = 8000;
     private const int FirstFrameTimeoutMs = 3000;   // max wait for a cold mic to start delivering audio
+    private const int EntraPrewarmTimeoutMs = 5000;
 
     private sealed record UpdateCandidate(string Tag, string? AssetUrl, string? AssetSha256);
 
@@ -193,6 +194,7 @@ public sealed class AppController : IDisposable
             LevelSource = () => _level,
             Position = _settings.ActiveProfile.OverlayPosition,
         };
+        EntraCredentialFactory.SetParentWindowHandle(new WindowInteropHelper(_overlay).EnsureHandle());
         RefreshInstalledUninstaller();
         MigrateLegacyShortcuts();
         BuildTray();
@@ -203,7 +205,7 @@ public sealed class AppController : IDisposable
         if (!_settings.OnboardingCompleted) ShowFirstRunOnboarding();
 
         _ = CheckForUpdatesAsync(silent: true);   // notify if a newer release exists; never auto-applies
-        _ = PrewarmEntraAsync();                  // sign in once up front so dictation never triggers a focus-stealing popup
+        _ = PrewarmEntraAsync();                  // refresh a cached Entra session without ever opening UI at startup
         PreverifySelectedLocalModel();            // hash large model files without freezing the first PTT UI frame
     }
 
@@ -219,27 +221,55 @@ public sealed class AppController : IDisposable
     }
 
     /// <summary>
-    /// If the selected engine uses Microsoft Entra auth, sign in at startup so the browser popup
-    /// happens now (not mid-dictation, where it would steal focus from the target window).
+    /// If the selected engine uses Microsoft Entra auth, refresh its cached WAM session without
+    /// opening UI. Interactive recovery belongs to the bounded transcription request so a startup
+    /// task can never own or duplicate the account dialog.
     /// </summary>
     private async Task PrewarmEntraAsync()
     {
-        bool entra =
-            (_settings.Engine == SpeechEngineKind.GptTranscribe && _settings.TranscribeAuthMode == AzureAuthMode.EntraId && !string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint)) ||
-            (_settings.Engine == SpeechEngineKind.Azure && _settings.AzureAuthMode == AzureAuthMode.EntraId && !string.IsNullOrWhiteSpace(_settings.AzureEndpoint));
-        if (!entra) return;
-
-        string tenant = _settings.Engine == SpeechEngineKind.GptTranscribe ? _settings.TranscribeTenantId : _settings.AzureTenantId;
         try
         {
-            await EntraCredentialFactory.PrewarmAsync(tenant, EntraCredentialFactory.CognitiveServicesScope);
-            Log.Write("Entra sign-in ready.");
+            using var timeout = new CancellationTokenSource(EntraPrewarmTimeoutMs);
+            bool? ready = await TryPrewarmSelectedEntraAsync(timeout.Token);
+            if (ready is null) return;
+            Log.Write(ready.Value
+                ? "Entra cached sign-in ready."
+                : "Entra interaction required; WAM will request it when the selected speech engine starts.");
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Write("Entra silent pre-warm timed out; authentication remains available on demand.");
         }
         catch (Exception ex)
         {
             Log.Error("Entra pre-warm", ex);
-            Notify("Azure sign-in needed", "Couldn't sign in to Azure for transcription. Open Settings to retry.");
         }
+    }
+
+    /// <summary>
+    /// Attempts a silent token refresh for the selected Entra engine. Returns null when Entra is
+    /// not selected, true when cached auth is ready, and false when user interaction is required.
+    /// </summary>
+    private async Task<bool?> TryPrewarmSelectedEntraAsync(CancellationToken cancellationToken)
+    {
+        string? tenant = _settings.Engine switch
+        {
+            SpeechEngineKind.GptTranscribe
+                when _settings.TranscribeAuthMode == AzureAuthMode.EntraId
+                     && !string.IsNullOrWhiteSpace(_settings.TranscribeEndpoint) =>
+                _settings.TranscribeTenantId,
+            SpeechEngineKind.Azure
+                when _settings.AzureAuthMode == AzureAuthMode.EntraId
+                     && !string.IsNullOrWhiteSpace(_settings.AzureEndpoint) =>
+                _settings.AzureTenantId,
+            _ => null,
+        };
+        if (tenant is null) return null;
+
+        return await EntraCredentialFactory.TryPrewarmAsync(
+            tenant,
+            EntraCredentialFactory.CognitiveServicesScope,
+            cancellationToken);
     }
 
     // ---------------- Dictation flow ----------------
@@ -279,13 +309,10 @@ public sealed class AppController : IDisposable
                 _engine.Partial += _partialHandler;
                 _engine.Final += _finalHandler;
                 _engine.Fault += _faultHandler;
-                if (_engine is OpenAiTranscribeEngine transcribe)
-                    transcribe.AuthExpired += OnTranscribeAuthExpired;
-
                 // Start the engine first so the audio feed never arrives before it's ready.
                 // Bound StartAsync so a hung SDK call can't hold the gate forever (real errors still propagate).
                 var startTask = _engine.StartAsync(_settings.Language);
-                if (await Task.WhenAny(startTask, Task.Delay(StartTimeoutMs, ct)) != startTask)
+                if (await Task.WhenAny(startTask, Task.Delay(_engine.StartTimeoutMs, ct)) != startTask)
                 {
                     ct.ThrowIfCancellationRequested();
                     _engine.Cancel();
@@ -305,6 +332,10 @@ public sealed class AppController : IDisposable
                 // Open (or reuse a warm) mic, then only cue the user to speak once it's actually
                 // delivering audio — so a cold-start device doesn't clip the first words.
                 _audio.BeginSession();
+                // GPT batch auth begins only after the PCM feed is live. A rare WAM prompt therefore
+                // appears near PTT start, while every spoken sample remains buffered for StopAsync.
+                if (_engine is OpenAiTranscribeEngine transcribe)
+                    transcribe.BeginAuthentication();
                 bool live = await Task.WhenAny(_audio.FirstFrame, Task.Delay(FirstFrameTimeoutMs, ct)) == _audio.FirstFrame;
                 ct.ThrowIfCancellationRequested();
                 _session.MoveTo(DictationSessionState.Listening);
@@ -478,10 +509,13 @@ public sealed class AppController : IDisposable
         _audio.EndSession();
         if (_engine is not null)
         {
-            bool stopped = await TryAwait(_engine.StopAsync(), _engine.StopTimeoutMs);
+            Task stopTask = _engine.StopAsync();
+            bool stopped = await TryAwait(stopTask, _engine.StopTimeoutMs);
             if (!stopped)
             {
                 Log.Write("WARN engine.StopAsync timed out; forcing dispose.");
+                _engine.Cancel();
+                _ = await TryAwait(stopTask, 1000);
                 _speechFault ??= new(
                     SpeechFaultKind.Timeout,
                     "Transcription timed out. Try a shorter recording or a faster local model.",
@@ -693,32 +727,8 @@ public sealed class AppController : IDisposable
         _partialHandler = null;
         _finalHandler = null;
         _faultHandler = null;
-        if (_engine is OpenAiTranscribeEngine transcribe)
-            transcribe.AuthExpired -= OnTranscribeAuthExpired;
         _engine.Dispose();
         _engine = null;
-    }
-
-    private volatile bool _reauthInFlight;
-
-    /// <summary>The transcribe engine couldn't get an Entra token (sign-in expired). Re-authenticate
-    /// in the background — off the dictation lock — so a browser popup never freezes dictation.</summary>
-    private void OnTranscribeAuthExpired()
-    {
-        if (_reauthInFlight) return;
-        _reauthInFlight = true;
-        _ui.BeginInvoke(() =>
-        {
-            Notify("Azure sign-in expired",
-                "Re-authenticating for transcription — a sign-in window may appear. Then just talk again.");
-            _ = ReauthAsync();
-        });
-    }
-
-    private async Task ReauthAsync()
-    {
-        try { await PrewarmEntraAsync(); }
-        finally { _reauthInFlight = false; }
     }
 
     private string Placeholder() => _settings.Language.StartsWith("zh") ? "聆听中…" : "Listening…";
@@ -1088,6 +1098,7 @@ public sealed class AppController : IDisposable
             _settings = updated;
             _store.Save(_settings);
             ApplyActiveProfile(profileChanged);
+            _ = PrewarmEntraAsync();
             PreverifySelectedLocalModel();
         }, _funAsr, new SettingsWindowActions(
             IsAutoStartEnabled,
@@ -1101,7 +1112,9 @@ public sealed class AppController : IDisposable
             () => _corrections.LoadPairs().Count,
             _corrections.Clear,
             ReviewCorrectionsAsync,
-            _updater),
+            _updater,
+            (tenantId, cancellationToken) =>
+                EntraCredentialFactory.SwitchAccountAsync(tenantId, cancellationToken)),
             showLanguageIntelligence);
         if (firstRun is not null)
         {
