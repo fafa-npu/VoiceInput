@@ -124,6 +124,10 @@ public sealed class SettingsWindowLayoutTests
             .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
         cancellableWindow.Close();
+        // Closing cancels an async-void click handler whose continuation is posted back to this
+        // dispatcher. Drain it before RunOnSta shuts the dispatcher down; otherwise the test host
+        // can race a late managed continuation during CLR teardown.
+        Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.ApplicationIdle, new Action(() => { }));
 
         Assert.True(cancellationObserved);
     }
